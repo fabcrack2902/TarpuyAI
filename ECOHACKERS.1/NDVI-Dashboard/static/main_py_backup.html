@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>main.py (backup) — Código</title>
+  <style>
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 24px; background:#0b0b0c; color:#e6edf3; }
+    .card { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px; padding:16px; box-shadow: 0 6px 18px rgba(2,6,23,0.6); }
+    pre { margin:0; overflow:auto; padding:16px; border-radius:8px; background:#071022; }
+    code { font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace; font-size:13px; line-height:1.5; white-space:pre; display:block; }
+    .ln { display:inline-block; width:48px; user-select:none; opacity:0.5; text-align:right; padding-right:12px; }
+    .line { display:block; }
+    .toolbar { display:flex; gap:8px; margin-bottom:12px; }
+    a.button { text-decoration:none; padding:8px 12px; background:#0f1724; border-radius:8px; color:#cfe8ff; box-shadow: 0 2px 6px rgba(2,6,23,0.6); }
+    .meta { font-size:13px; color:#9fb3c8; margin-bottom:8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="meta">Archivo convertido: <strong>main.py.bak</strong> → <strong>main_py_backup.html</strong> · 675 líneas</div>
+    <div class="toolbar">
+      <a class="button" href="sandbox:/mnt/data/main_py_backup.html" download>Descargar HTML</a>
+    </div>
+    <pre><code><span class="line"><span class="ln">1</span>#!/usr/bin/env python3</span>
+<span class="line"><span class="ln">2</span># main.py</span>
+<span class="line"><span class="ln">3</span>import io</span>
+<span class="line"><span class="ln">4</span>import math</span>
+<span class="line"><span class="ln">5</span>import os</span>
+<span class="line"><span class="ln">6</span>import sqlite3</span>
+<span class="line"><span class="ln">7</span>import tempfile</span>
+<span class="line"><span class="ln">8</span>import hashlib</span>
+<span class="line"><span class="ln">9</span>import logging</span>
+<span class="line"><span class="ln">10</span>from pathlib import Path</span>
+<span class="line"><span class="ln">11</span>from datetime import datetime, timedelta</span>
+<span class="line"><span class="ln">12</span>from typing import Tuple, List, Dict</span>
+<span class="line"><span class="ln">13</span></span>
+<span class="line"><span class="ln">14</span>import numpy as np</span>
+<span class="line"><span class="ln">15</span>from fastapi import FastAPI, Response, HTTPException, Query</span>
+<span class="line"><span class="ln">16</span>from fastapi.middleware.cors import CORSMiddleware</span>
+<span class="line"><span class="ln">17</span>from fastapi.staticfiles import StaticFiles</span>
+<span class="line"><span class="ln">18</span>from PIL import Image</span>
+<span class="line"><span class="ln">19</span>from starlette.responses import FileResponse, JSONResponse, HTMLResponse</span>
+<span class="line"><span class="ln">20</span></span>
+<span class="line"><span class="ln">21</span># --- Configuration</span>
+<span class="line"><span class="ln">22</span>BASE_DIR = Path(__file__).resolve().parent</span>
+<span class="line"><span class="ln">23</span></span>
+<span class="line"><span class="ln">24</span># Ensure working directory is project root so StaticFiles and relative paths behave consistently</span>
+<span class="line"><span class="ln">25</span>os.chdir(str(BASE_DIR))</span>
+<span class="line"><span class="ln">26</span></span>
+<span class="line"><span class="ln">27</span>STATIC_DIR = BASE_DIR / &quot;static&quot;</span>
+<span class="line"><span class="ln">28</span>app.mount(&quot;/static&quot;, StaticFiles(directory=str(STATIC_DIR)), name=&quot;static&quot;)</span>
+<span class="line"><span class="ln">29</span>app.mount(&quot;/static&quot;, StaticFiles(directory=str(STATIC_DIR)), name=&quot;static&quot;)</span>
+<span class="line"><span class="ln">30</span>DB_PATH = os.environ.get(&quot;DATA_DB&quot;, str(BASE_DIR / &quot;data.db&quot;))</span>
+<span class="line"><span class="ln">31</span>TILE_SIZE = 256</span>
+<span class="line"><span class="ln">32</span>TILE_CACHE_DIR = os.environ.get(&quot;TILE_CACHE&quot;, str(BASE_DIR / &quot;tiles_cache&quot;))</span>
+<span class="line"><span class="ln">33</span>SIM_PARAMS = {</span>
+<span class="line"><span class="ln">34</span>    &quot;noise_level&quot;: float(os.environ.get(&quot;SIM_NOISE&quot;, &quot;0.03&quot;)),</span>
+<span class="line"><span class="ln">35</span>    &quot;seasonal_amp&quot;: float(os.environ.get(&quot;SIM_SEASONAL_AMP&quot;, &quot;0.45&quot;)),</span>
+<span class="line"><span class="ln">36</span>    &quot;radial_amp&quot;: float(os.environ.get(&quot;SIM_RADIAL_AMP&quot;, &quot;0.35&quot;)),</span>
+<span class="line"><span class="ln">37</span>}</span>
+<span class="line"><span class="ln">38</span>NDVI_MIN_DISPLAY = -0.2</span>
+<span class="line"><span class="ln">39</span>NDVI_MAX_DISPLAY = 0.95</span>
+<span class="line"><span class="ln">40</span>VEG_ALPHA_THRESHOLD = 0.1  # below this NDVI -&gt; fully transparent</span>
+<span class="line"><span class="ln">41</span></span>
+<span class="line"><span class="ln">42</span># Ensure directories exist</span>
+<span class="line"><span class="ln">43</span>os.makedirs(TILE_CACHE_DIR, exist_ok=True)</span>
+<span class="line"><span class="ln">44</span>os.makedirs(STATIC_DIR, exist_ok=True)</span>
+<span class="line"><span class="ln">45</span></span>
+<span class="line"><span class="ln">46</span># --- Logging and app</span>
+<span class="line"><span class="ln">47</span>logging.basicConfig(level=logging.INFO, format=&quot;%(asctime)s %(levelname)s %(message)s&quot;)</span>
+<span class="line"><span class="ln">48</span>logger = logging.getLogger(&quot;ndvi&quot;)</span>
+<span class="line"><span class="ln">49</span></span>
+<span class="line"><span class="ln">50</span>app = FastAPI()</span>
+<span class="line"><span class="ln">51</span># Development-appropriate CORS; restrict in production</span>
+<span class="line"><span class="ln">52</span>app.add_middleware(CORSMiddleware, allow_origins=[&quot;*&quot;], allow_methods=[&quot;*&quot;], allow_headers=[&quot;*&quot;])</span>
+<span class="line"><span class="ln">53</span></span>
+<span class="line"><span class="ln">54</span># Mount static files from absolute path</span>
+<span class="line"><span class="ln">55</span>app.mount(&quot;/static&quot;, StaticFiles(directory=str(STATIC_DIR)), name=&quot;static&quot;)</span>
+<span class="line"><span class="ln">56</span></span>
+<span class="line"><span class="ln">57</span></span>
+<span class="line"><span class="ln">58</span># --- Database helpers</span>
+<span class="line"><span class="ln">59</span>def get_db_conn():</span>
+<span class="line"><span class="ln">60</span>    conn = sqlite3.connect(DB_PATH, check_same_thread=False)</span>
+<span class="line"><span class="ln">61</span>    conn.row_factory = sqlite3.Row</span>
+<span class="line"><span class="ln">62</span>    try:</span>
+<span class="line"><span class="ln">63</span>        conn.execute(&quot;PRAGMA journal_mode=WAL;&quot;)</span>
+<span class="line"><span class="ln">64</span>    except Exception:</span>
+<span class="line"><span class="ln">65</span>        pass</span>
+<span class="line"><span class="ln">66</span>    return conn</span>
+<span class="line"><span class="ln">67</span></span>
+<span class="line"><span class="ln">68</span></span>
+<span class="line"><span class="ln">69</span>def init_db():</span>
+<span class="line"><span class="ln">70</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">71</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">72</span></span>
+<span class="line"><span class="ln">73</span>        # domain tables</span>
+<span class="line"><span class="ln">74</span>        cur.execute(&quot;&quot;&quot;CREATE TABLE IF NOT EXISTS stations (id INTEGER PRIMARY KEY, name TEXT, lon REAL, lat REAL)&quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">75</span>        cur.execute(&quot;&quot;&quot;CREATE TABLE IF NOT EXISTS areas (id INTEGER PRIMARY KEY, name TEXT, geom TEXT)&quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">76</span>        cur.execute(&quot;&quot;&quot;CREATE TABLE IF NOT EXISTS crops (id INTEGER PRIMARY KEY, name TEXT, lon REAL, lat REAL, area REAL)&quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">77</span>        cur.execute(&quot;&quot;&quot;CREATE TABLE IF NOT EXISTS pollinators (id INTEGER PRIMARY KEY, name TEXT, lon REAL, lat REAL, abundance INTEGER)&quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">78</span></span>
+<span class="line"><span class="ln">79</span>        # species metadata and regional mapping</span>
+<span class="line"><span class="ln">80</span>        cur.execute(&quot;&quot;&quot;</span>
+<span class="line"><span class="ln">81</span>            CREATE TABLE IF NOT EXISTS species_meta (</span>
+<span class="line"><span class="ln">82</span>                id INTEGER PRIMARY KEY,</span>
+<span class="line"><span class="ln">83</span>                name TEXT UNIQUE,</span>
+<span class="line"><span class="ln">84</span>                common_name TEXT,</span>
+<span class="line"><span class="ln">85</span>                bloom_start_month INTEGER,</span>
+<span class="line"><span class="ln">86</span>                bloom_end_month INTEGER,</span>
+<span class="line"><span class="ln">87</span>                soil TEXT,</span>
+<span class="line"><span class="ln">88</span>                organic_recommendation TEXT,</span>
+<span class="line"><span class="ln">89</span>                notes TEXT</span>
+<span class="line"><span class="ln">90</span>            )</span>
+<span class="line"><span class="ln">91</span>        &quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">92</span>        cur.execute(&quot;&quot;&quot;</span>
+<span class="line"><span class="ln">93</span>            CREATE TABLE IF NOT EXISTS regional_species (</span>
+<span class="line"><span class="ln">94</span>                id INTEGER PRIMARY KEY,</span>
+<span class="line"><span class="ln">95</span>                region TEXT,</span>
+<span class="line"><span class="ln">96</span>                province TEXT,</span>
+<span class="line"><span class="ln">97</span>                species_name TEXT,</span>
+<span class="line"><span class="ln">98</span>                UNIQUE(region, province, species_name)</span>
+<span class="line"><span class="ln">99</span>            )</span>
+<span class="line"><span class="ln">100</span>        &quot;&quot;&quot;)</span>
+<span class="line"><span class="ln">101</span></span>
+<span class="line"><span class="ln">102</span>        # seed example data where empty</span>
+<span class="line"><span class="ln">103</span>        cur.execute(&quot;SELECT COUNT(*) FROM stations&quot;)</span>
+<span class="line"><span class="ln">104</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">105</span>            cur.executemany(&quot;INSERT INTO stations (name, lon, lat) VALUES (?,?,?)&quot;, [</span>
+<span class="line"><span class="ln">106</span>                (&quot;Estacion A&quot;, -77.0, -12.0), (&quot;Estacion B&quot;, -76.8, -12.2),</span>
+<span class="line"><span class="ln">107</span>                (&quot;Estacion C&quot;, -77.03, -12.015), (&quot;Estacion D&quot;, -76.985, -12.035),</span>
+<span class="line"><span class="ln">108</span>            ])</span>
+<span class="line"><span class="ln">109</span></span>
+<span class="line"><span class="ln">110</span>        cur.execute(&quot;SELECT COUNT(*) FROM areas&quot;)</span>
+<span class="line"><span class="ln">111</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">112</span>            cur.execute(&quot;INSERT INTO areas (name, geom) VALUES (?,?)&quot;,</span>
+<span class="line"><span class="ln">113</span>                        (&quot;Area Protegida 1&quot;, &quot;POLYGON((-77.05 -12.05, -76.95 -12.05, -76.95 -11.95, -77.05 -11.95, -77.05 -12.05))&quot;))</span>
+<span class="line"><span class="ln">114</span></span>
+<span class="line"><span class="ln">115</span>        cur.execute(&quot;SELECT COUNT(*) FROM crops&quot;)</span>
+<span class="line"><span class="ln">116</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">117</span>            cur.executemany(&quot;INSERT INTO crops (name, lon, lat, area) VALUES (?,?,?,?)&quot;, [</span>
+<span class="line"><span class="ln">118</span>                (&quot;Maiz&quot;, -77.02, -12.01, 12.3), (&quot;Quinoa&quot;, -76.99, -12.03, 5.2),</span>
+<span class="line"><span class="ln">119</span>            ])</span>
+<span class="line"><span class="ln">120</span></span>
+<span class="line"><span class="ln">121</span>        cur.execute(&quot;SELECT COUNT(*) FROM pollinators&quot;)</span>
+<span class="line"><span class="ln">122</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">123</span>            cur.executemany(&quot;INSERT INTO pollinators (name, lon, lat, abundance) VALUES (?,?,?,?)&quot;, [</span>
+<span class="line"><span class="ln">124</span>                (&quot;Abeja A&quot;, -77.01, -12.02, 20), (&quot;Abejorro B&quot;, -76.98, -12.04, 8),</span>
+<span class="line"><span class="ln">125</span>            ])</span>
+<span class="line"><span class="ln">126</span></span>
+<span class="line"><span class="ln">127</span>        # seed species_meta if empty</span>
+<span class="line"><span class="ln">128</span>        cur.execute(&quot;SELECT COUNT(*) FROM species_meta&quot;)</span>
+<span class="line"><span class="ln">129</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">130</span>            species_meta_rows = [</span>
+<span class="line"><span class="ln">131</span>                # COSTA</span>
+<span class="line"><span class="ln">132</span>                (&quot;Amancaes&quot;, &quot;Amancaes&quot;, 8, 11, &quot;sandy-loam; well-drained&quot;, &quot;compost 3-5 kg/m2 annual; low N&quot;, &quot;Prefers coastal dry soil; native; conserve water&quot;),</span>
+<span class="line"><span class="ln">133</span>                (&quot;Huaranhuay&quot;, &quot;Huaranhuay&quot;, 6, 9, &quot;sandy-loam&quot;, &quot;balanced compost; moderate P&quot;, &quot;Resilient, tolerates saline influence&quot;),</span>
+<span class="line"><span class="ln">134</span>                (&quot;Cardo costero&quot;, &quot;Cardo costero&quot;, 7, 10, &quot;sandy; well-drained&quot;, &quot;organic mulch; low fertilizer&quot;, &quot;Thorny coastal shrub&quot;),</span>
+<span class="line"><span class="ln">135</span>                (&quot;Lirio de mar&quot;, &quot;Lirio de mar&quot;, 9, 12, &quot;sandy; slightly acidic&quot;, &quot;seaweed compost; moderate K&quot;, &quot;Coastal lily, needs good drainage&quot;),</span>
+<span class="line"><span class="ln">136</span></span>
+<span class="line"><span class="ln">137</span>                # SIERRA</span>
+<span class="line"><span class="ln">138</span>                (&quot;Cantuta&quot;, &quot;Cantuta&quot;, 11, 2, &quot;loam; good drainage&quot;, &quot;compost; moderate N&quot;, &quot;Highland ornamental; cultural value&quot;),</span>
+<span class="line"><span class="ln">139</span>                (&quot;Puya Raimondii&quot;, &quot;Puya Raimondii&quot;, 12, 3, &quot;rocky, poor soil&quot;, &quot;minimal organic matter; avoid waterlogging&quot;, &quot;Slow-growing giant bromeliad&quot;),</span>
+<span class="line"><span class="ln">140</span>                (&quot;Kantu rosada&quot;, &quot;Kantu rosada&quot;, 10, 1, &quot;well-drained loam&quot;, &quot;compost annually&quot;, &quot;High-elevation ornamental&quot;),</span>
+<span class="line"><span class="ln">141</span>                (&quot;Retama&quot;, &quot;Retama&quot;, 6, 9, &quot;sandy-loam; alkaline tolerant&quot;, &quot;low organic requirement&quot;, &quot;Resinous shrub adapted to poor soils&quot;),</span>
+<span class="line"><span class="ln">142</span>                (&quot;Ichu&quot;, &quot;Ichu&quot;, 1, 12, &quot;coarse; poor; well-drained&quot;, &quot;not required; light compost&quot;, &quot;Native grass used for fodder and thatching&quot;),</span>
+<span class="line"><span class="ln">143</span>                (&quot;Maracuyá&quot;, &quot;Maracuyá&quot;, 9, 2, &quot;rich loam; moist&quot;, &quot;organic fertilizer; NPK balanced&quot;, &quot;Passionfruit vine; requires staking and irrigation&quot;),</span>
+<span class="line"><span class="ln">144</span>                (&quot;Flor de ichu&quot;, &quot;Flor de ichu&quot;, 1, 12, &quot;coarse; poor&quot;, &quot;minimal&quot;, &quot;High altitude grass flower&quot;),</span>
+<span class="line"><span class="ln">145</span></span>
+<span class="line"><span class="ln">146</span>                # SELVA</span>
+<span class="line"><span class="ln">147</span>                (&quot;Orquídeas&quot;, &quot;Orquídeas&quot;, 3, 8, &quot;rich, humus; high organic&quot;, &quot;orchid bark, moss; slow-release&quot;, &quot;Many species; shade and humidity required&quot;),</span>
+<span class="line"><span class="ln">148</span>                (&quot;Heliconia&quot;, &quot;Heliconia&quot;, 5, 10, &quot;rich loam; moist&quot;, &quot;high-organic compost; mulching&quot;, &quot;Tropical understory; needs humidity&quot;),</span>
+<span class="line"><span class="ln">149</span>                (&quot;Achiote&quot;, &quot;Achiote&quot;, 7, 11, &quot;well-drained loam&quot;, &quot;organic compost; phosphorus-rich&quot;, &quot;Annatto tree; agroforestry-friendly&quot;),</span>
+<span class="line"><span class="ln">150</span>                (&quot;Guaba&quot;, &quot;Guaba&quot;, 9, 12, &quot;loamy; nitrogen-fixing intercropping&quot;, &quot;light compost&quot;, &quot;Inga edulis, nitrogen-fixing&quot;),</span>
+<span class="line"><span class="ln">151</span>                (&quot;Orquídeas amazónicas&quot;, &quot;Orquídeas amazónicas&quot;, 3, 9, &quot;epiphytic media or humus-rich soil&quot;, &quot;orchid mixes; high humidity&quot;, &quot;Diverse Amazon orchids&quot;),</span>
+<span class="line"><span class="ln">152</span>            ]</span>
+<span class="line"><span class="ln">153</span>            cur.executemany(&quot;&quot;&quot;</span>
+<span class="line"><span class="ln">154</span>                INSERT INTO species_meta (name, common_name, bloom_start_month, bloom_end_month, soil, organic_recommendation, notes)</span>
+<span class="line"><span class="ln">155</span>                VALUES (?,?,?,?,?,?,?)</span>
+<span class="line"><span class="ln">156</span>            &quot;&quot;&quot;, species_meta_rows)</span>
+<span class="line"><span class="ln">157</span></span>
+<span class="line"><span class="ln">158</span>        # seed regional_species if empty</span>
+<span class="line"><span class="ln">159</span>        cur.execute(&quot;SELECT COUNT(*) FROM regional_species&quot;)</span>
+<span class="line"><span class="ln">160</span>        if cur.fetchone()[0] == 0:</span>
+<span class="line"><span class="ln">161</span>            regional_rows = [</span>
+<span class="line"><span class="ln">162</span>                # COSTA</span>
+<span class="line"><span class="ln">163</span>                (&quot;Lima&quot;, None, &quot;Amancaes&quot;), (&quot;Lima&quot;, None, &quot;Huaranhuay&quot;), (&quot;Lima&quot;, None, &quot;Cardo costero&quot;),</span>
+<span class="line"><span class="ln">164</span>                (&quot;Ica&quot;, None, &quot;Lirio de mar&quot;), (&quot;Ica&quot;, None, &quot;Huaranhuay&quot;),</span>
+<span class="line"><span class="ln">165</span>                (&quot;La Libertad&quot;, None, &quot;Lirio de mar&quot;), (&quot;La Libertad&quot;, None, &quot;Cardo costero&quot;),</span>
+<span class="line"><span class="ln">166</span>                (&quot;Arequipa&quot;, None, &quot;Retama&quot;), (&quot;Arequipa&quot;, None, &quot;Huaranhuay&quot;), (&quot;Arequipa&quot;, None, &quot;Cantuta&quot;),</span>
+<span class="line"><span class="ln">167</span>                # SIERRA</span>
+<span class="line"><span class="ln">168</span>                (&quot;Cusco&quot;, None, &quot;Cantuta&quot;), (&quot;Cusco&quot;, None, &quot;Puya Raimondii&quot;), (&quot;Cusco&quot;, None, &quot;Kantu rosada&quot;),</span>
+<span class="line"><span class="ln">169</span>                (&quot;Puno&quot;, None, &quot;Puya Raimondii&quot;), (&quot;Puno&quot;, None, &quot;Flor de ichu&quot;),</span>
+<span class="line"><span class="ln">170</span>                (&quot;Ancash&quot;, None, &quot;Cantuta&quot;), (&quot;Ancash&quot;, None, &quot;Puya Raimondii&quot;),</span>
+<span class="line"><span class="ln">171</span>                (&quot;Huancavelica&quot;, None, &quot;Retama&quot;), (&quot;Huancavelica&quot;, None, &quot;Cantuta&quot;), (&quot;Huancavelica&quot;, None, &quot;Ichu&quot;),</span>
+<span class="line"><span class="ln">172</span>                (&quot;Junín&quot;, None, &quot;Retama&quot;), (&quot;Junín&quot;, None, &quot;Ichu&quot;), (&quot;Junín&quot;, None, &quot;Maracuyá&quot;),</span>
+<span class="line"><span class="ln">173</span>                (&quot;Ayacucho&quot;, None, &quot;Cantuta&quot;), (&quot;Ayacucho&quot;, None, &quot;Puya Raimondii&quot;), (&quot;Ayacucho&quot;, None, &quot;Retama&quot;),</span>
+<span class="line"><span class="ln">174</span>                # SELVA</span>
+<span class="line"><span class="ln">175</span>                (&quot;San Martín&quot;, None, &quot;Orquídeas&quot;), (&quot;San Martín&quot;, None, &quot;Heliconia&quot;), (&quot;San Martín&quot;, None, &quot;Achiote&quot;),</span>
+<span class="line"><span class="ln">176</span>                (&quot;Loreto&quot;, None, &quot;Heliconia&quot;), (&quot;Loreto&quot;, None, &quot;Achiote&quot;), (&quot;Loreto&quot;, None, &quot;Guaba&quot;),</span>
+<span class="line"><span class="ln">177</span>                (&quot;Ucayali&quot;, None, &quot;Heliconia&quot;), (&quot;Ucayali&quot;, None, &quot;Achiote&quot;), (&quot;Ucayali&quot;, None, &quot;Maracuyá&quot;),</span>
+<span class="line"><span class="ln">178</span>                (&quot;Madre de Dios&quot;, None, &quot;Orquídeas&quot;), (&quot;Madre de Dios&quot;, None, &quot;Heliconia&quot;), (&quot;Madre de Dios&quot;, None, &quot;Achiote&quot;),</span>
+<span class="line"><span class="ln">179</span>                (&quot;Amazonas&quot;, None, &quot;Orquídeas amazónicas&quot;),</span>
+<span class="line"><span class="ln">180</span>            ]</span>
+<span class="line"><span class="ln">181</span>            cur.executemany(&quot;INSERT INTO regional_species (region, province, species_name) VALUES (?,?,?)&quot;, regional_rows)</span>
+<span class="line"><span class="ln">182</span></span>
+<span class="line"><span class="ln">183</span>        conn.commit()</span>
+<span class="line"><span class="ln">184</span></span>
+<span class="line"><span class="ln">185</span></span>
+<span class="line"><span class="ln">186</span># seed DB on import</span>
+<span class="line"><span class="ln">187</span>init_db()</span>
+<span class="line"><span class="ln">188</span></span>
+<span class="line"><span class="ln">189</span></span>
+<span class="line"><span class="ln">190</span># --- Static root</span>
+<span class="line"><span class="ln">191</span>@app.get(&quot;/&quot;)</span>
+<span class="line"><span class="ln">192</span>async def root():</span>
+<span class="line"><span class="ln">193</span>    index_path = STATIC_DIR / &quot;index.html&quot;</span>
+<span class="line"><span class="ln">194</span>    if not index_path.exists():</span>
+<span class="line"><span class="ln">195</span>        return JSONResponse({&quot;error&quot;: &quot;static/index.html not found&quot;, &quot;static_dir&quot;: str(STATIC_DIR)}, status_code=500)</span>
+<span class="line"><span class="ln">196</span>    return FileResponse(str(index_path))</span>
+<span class="line"><span class="ln">197</span></span>
+<span class="line"><span class="ln">198</span></span>
+<span class="line"><span class="ln">199</span>@app.get(&quot;/health&quot;)</span>
+<span class="line"><span class="ln">200</span>async def health():</span>
+<span class="line"><span class="ln">201</span>    return {&quot;status&quot;: &quot;ok&quot;}</span>
+<span class="line"><span class="ln">202</span></span>
+<span class="line"><span class="ln">203</span></span>
+<span class="line"><span class="ln">204</span>@app.get(&quot;/layers&quot;)</span>
+<span class="line"><span class="ln">205</span>async def layers():</span>
+<span class="line"><span class="ln">206</span>    return [</span>
+<span class="line"><span class="ln">207</span>        {&quot;id&quot;: &quot;ndvi&quot;, &quot;title&quot;: &quot;Simulated NDVI&quot;, &quot;type&quot;: &quot;raster&quot;},</span>
+<span class="line"><span class="ln">208</span>        {&quot;id&quot;: &quot;stations&quot;, &quot;title&quot;: &quot;Seasons&quot;, &quot;type&quot;: &quot;vector&quot;},</span>
+<span class="line"><span class="ln">209</span>        {&quot;id&quot;: &quot;areas&quot;, &quot;title&quot;: &quot;Protected Areas&quot;, &quot;type&quot;: &quot;vector&quot;},</span>
+<span class="line"><span class="ln">210</span>        {&quot;id&quot;: &quot;crops&quot;, &quot;title&quot;: &quot;Crops&quot;, &quot;type&quot;: &quot;vector&quot;},</span>
+<span class="line"><span class="ln">211</span>        {&quot;id&quot;: &quot;pollinators&quot;, &quot;title&quot;: &quot;Pollinators&quot;, &quot;type&quot;: &quot;vector&quot;},</span>
+<span class="line"><span class="ln">212</span>        {&quot;id&quot;: &quot;species&quot;, &quot;title&quot;: &quot;Regional species&quot;, &quot;type&quot;: &quot;vector&quot;},</span>
+<span class="line"><span class="ln">213</span>    ]</span>
+<span class="line"><span class="ln">214</span></span>
+<span class="line"><span class="ln">215</span></span>
+<span class="line"><span class="ln">216</span># --- helpers</span>
+<span class="line"><span class="ln">217</span>def rows_to_geojson(rows, geom_key=None, lon_key=&quot;lon&quot;, lat_key=&quot;lat&quot;, props=None):</span>
+<span class="line"><span class="ln">218</span>    features = []</span>
+<span class="line"><span class="ln">219</span>    for r in rows:</span>
+<span class="line"><span class="ln">220</span>        props_dict = {}</span>
+<span class="line"><span class="ln">221</span>        if props:</span>
+<span class="line"><span class="ln">222</span>            for p in props:</span>
+<span class="line"><span class="ln">223</span>                props_dict[p] = r[p]</span>
+<span class="line"><span class="ln">224</span>        if geom_key and r[geom_key]:</span>
+<span class="line"><span class="ln">225</span>            features.append({&quot;type&quot;: &quot;Feature&quot;, &quot;geometry&quot;: None, &quot;properties&quot;: {&quot;wkt&quot;: r[geom_key], **props_dict}})</span>
+<span class="line"><span class="ln">226</span>        elif lon_key in r.keys() and lat_key in r.keys():</span>
+<span class="line"><span class="ln">227</span>            features.append({&quot;type&quot;: &quot;Feature&quot;, &quot;geometry&quot;: {&quot;type&quot;: &quot;Point&quot;, &quot;coordinates&quot;: [r[lon_key], r[lat_key]]}, &quot;properties&quot;: props_dict})</span>
+<span class="line"><span class="ln">228</span>        else:</span>
+<span class="line"><span class="ln">229</span>            features.append({&quot;type&quot;: &quot;Feature&quot;, &quot;geometry&quot;: None, &quot;properties&quot;: props_dict})</span>
+<span class="line"><span class="ln">230</span>    return {&quot;type&quot;: &quot;FeatureCollection&quot;, &quot;features&quot;: features}</span>
+<span class="line"><span class="ln">231</span></span>
+<span class="line"><span class="ln">232</span></span>
+<span class="line"><span class="ln">233</span># db endpoints</span>
+<span class="line"><span class="ln">234</span>@app.get(&quot;/db/stations&quot;)</span>
+<span class="line"><span class="ln">235</span>async def db_stations():</span>
+<span class="line"><span class="ln">236</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">237</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">238</span>        cur.execute(&quot;SELECT id,name,lon,lat FROM stations&quot;)</span>
+<span class="line"><span class="ln">239</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">240</span>    return rows_to_geojson(rows, lon_key=&quot;lon&quot;, lat_key=&quot;lat&quot;, props=[&quot;id&quot;, &quot;name&quot;])</span>
+<span class="line"><span class="ln">241</span></span>
+<span class="line"><span class="ln">242</span></span>
+<span class="line"><span class="ln">243</span>@app.get(&quot;/db/areas&quot;)</span>
+<span class="line"><span class="ln">244</span>async def db_areas():</span>
+<span class="line"><span class="ln">245</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">246</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">247</span>        cur.execute(&quot;SELECT id,name,geom FROM areas&quot;)</span>
+<span class="line"><span class="ln">248</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">249</span>    return rows_to_geojson(rows, geom_key=&quot;geom&quot;, props=[&quot;id&quot;, &quot;name&quot;])</span>
+<span class="line"><span class="ln">250</span></span>
+<span class="line"><span class="ln">251</span></span>
+<span class="line"><span class="ln">252</span>@app.get(&quot;/db/crops&quot;)</span>
+<span class="line"><span class="ln">253</span>async def db_crops():</span>
+<span class="line"><span class="ln">254</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">255</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">256</span>        cur.execute(&quot;SELECT id,name,lon,lat,area FROM crops&quot;)</span>
+<span class="line"><span class="ln">257</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">258</span>    return rows_to_geojson(rows, lon_key=&quot;lon&quot;, lat_key=&quot;lat&quot;, props=[&quot;id&quot;, &quot;name&quot;, &quot;area&quot;])</span>
+<span class="line"><span class="ln">259</span></span>
+<span class="line"><span class="ln">260</span></span>
+<span class="line"><span class="ln">261</span>@app.get(&quot;/db/pollinators&quot;)</span>
+<span class="line"><span class="ln">262</span>async def db_pollinators():</span>
+<span class="line"><span class="ln">263</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">264</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">265</span>        cur.execute(&quot;SELECT id,name,lon,lat,abundance FROM pollinators&quot;)</span>
+<span class="line"><span class="ln">266</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">267</span>    return rows_to_geojson(rows, lon_key=&quot;lon&quot;, lat_key=&quot;lat&quot;, props=[&quot;id&quot;, &quot;name&quot;, &quot;abundance&quot;])</span>
+<span class="line"><span class="ln">268</span></span>
+<span class="line"><span class="ln">269</span></span>
+<span class="line"><span class="ln">270</span># --- Geo / tile helpers</span>
+<span class="line"><span class="ln">271</span>def tile_xyz_to_bbox(z: int, x: int, y: int) -&gt; Tuple[float, float, float, float]:</span>
+<span class="line"><span class="ln">272</span>    n = 2.0 ** z</span>
+<span class="line"><span class="ln">273</span>    lon_left = x / n * 360.0 - 180.0</span>
+<span class="line"><span class="ln">274</span>    lon_right = (x + 1) / n * 360.0 - 180.0</span>
+<span class="line"><span class="ln">275</span>    lat_top = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))</span>
+<span class="line"><span class="ln">276</span>    lat_bottom = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))</span>
+<span class="line"><span class="ln">277</span>    return lon_left, lat_bottom, lon_right, lat_top</span>
+<span class="line"><span class="ln">278</span></span>
+<span class="line"><span class="ln">279</span></span>
+<span class="line"><span class="ln">280</span>def perceptual_colormap(ndvi: np.ndarray) -&gt; np.ndarray:</span>
+<span class="line"><span class="ln">281</span>    v = np.clip((ndvi - NDVI_MIN_DISPLAY) / (NDVI_MAX_DISPLAY - NDVI_MIN_DISPLAY), 0.0, 1.0)</span>
+<span class="line"><span class="ln">282</span>    stops = [</span>
+<span class="line"><span class="ln">283</span>        (0.0, np.array([120, 63, 32], dtype=np.float32)),</span>
+<span class="line"><span class="ln">284</span>        (0.25, np.array([255, 213, 79], dtype=np.float32)),</span>
+<span class="line"><span class="ln">285</span>        (0.5, np.array([173, 239, 127], dtype=np.float32)),</span>
+<span class="line"><span class="ln">286</span>        (0.75, np.array([60, 160, 80], dtype=np.float32)),</span>
+<span class="line"><span class="ln">287</span>        (1.0, np.array([10, 90, 40], dtype=np.float32)),</span>
+<span class="line"><span class="ln">288</span>    ]</span>
+<span class="line"><span class="ln">289</span>    rgb = np.zeros(ndvi.shape + (3,), dtype=np.uint8)</span>
+<span class="line"><span class="ln">290</span>    for i in range(len(stops) - 1):</span>
+<span class="line"><span class="ln">291</span>        lpos, lcol = stops[i]; rpos, rcol = stops[i + 1]</span>
+<span class="line"><span class="ln">292</span>        mask = (v &gt;= lpos) &amp; (v &lt;= rpos)</span>
+<span class="line"><span class="ln">293</span>        if np.any(mask):</span>
+<span class="line"><span class="ln">294</span>            t = (v[mask] - lpos) / (rpos - lpos)</span>
+<span class="line"><span class="ln">295</span>            interp = (1 - t)[:, None] * lcol[None, :] + t[:, None] * rcol[None, :]</span>
+<span class="line"><span class="ln">296</span>            rgb[mask] = np.round(interp).astype(np.uint8)</span>
+<span class="line"><span class="ln">297</span>    rgb[v &lt;= stops[0][0]] = stops[0][1]; rgb[v &gt;= stops[-1][0]] = stops[-1][1]</span>
+<span class="line"><span class="ln">298</span>    return rgb</span>
+<span class="line"><span class="ln">299</span></span>
+<span class="line"><span class="ln">300</span></span>
+<span class="line"><span class="ln">301</span>def deterministic_rng_seed(key: str) -&gt; np.random.RandomState:</span>
+<span class="line"><span class="ln">302</span>    h = hashlib.sha256(key.encode(&quot;utf-8&quot;)).digest()[:4]</span>
+<span class="line"><span class="ln">303</span>    seed = int.from_bytes(h, &quot;big&quot;)</span>
+<span class="line"><span class="ln">304</span>    return np.random.RandomState(seed)</span>
+<span class="line"><span class="ln">305</span></span>
+<span class="line"><span class="ln">306</span></span>
+<span class="line"><span class="ln">307</span>def generate_ndvi_array(tile_bbox: Tuple[float, float, float, float], z: int, x: int, y: int, date_str: str, params=None) -&gt; np.ndarray:</span>
+<span class="line"><span class="ln">308</span>    if params is None:</span>
+<span class="line"><span class="ln">309</span>        params = SIM_PARAMS</span>
+<span class="line"><span class="ln">310</span>    lon0, lat0, lon1, lat1 = tile_bbox</span>
+<span class="line"><span class="ln">311</span>    xs = np.linspace(lon0, lon1, TILE_SIZE)</span>
+<span class="line"><span class="ln">312</span>    ys = np.linspace(lat1, lat0, TILE_SIZE)</span>
+<span class="line"><span class="ln">313</span>    lon_grid, lat_grid = np.meshgrid(xs, ys)</span>
+<span class="line"><span class="ln">314</span>    try:</span>
+<span class="line"><span class="ln">315</span>        dt = datetime.strptime(date_str, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">316</span>    except Exception:</span>
+<span class="line"><span class="ln">317</span>        dt = datetime.utcnow()</span>
+<span class="line"><span class="ln">318</span>    doy = dt.timetuple().tm_yday</span>
+<span class="line"><span class="ln">319</span>    seasonal = params[&quot;seasonal_amp&quot;] * (0.5 * (1 + np.sin(2 * math.pi * (doy / 365.0))))</span>
+<span class="line"><span class="ln">320</span>    lat_factor = -0.004 * (lat_grid + 12.0)</span>
+<span class="line"><span class="ln">321</span>    cx = (lon0 + lon1) / 2.0 + ((x % 4) - 1.5) * 0.018</span>
+<span class="line"><span class="ln">322</span>    cy = (lat0 + lat1) / 2.0 + ((y % 4) - 1.5) * 0.018</span>
+<span class="line"><span class="ln">323</span>    r = np.sqrt((lon_grid - cx) ** 2 + (lat_grid - cy) ** 2)</span>
+<span class="line"><span class="ln">324</span>    radial = np.exp(- (r * 18.0) ** 2)</span>
+<span class="line"><span class="ln">325</span>    seed_key = f&quot;{z}-{x}-{y}-{date_str}&quot;</span>
+<span class="line"><span class="ln">326</span>    rng = deterministic_rng_seed(seed_key)</span>
+<span class="line"><span class="ln">327</span>    noise = rng.normal(scale=params[&quot;noise_level&quot;], size=(TILE_SIZE, TILE_SIZE))</span>
+<span class="line"><span class="ln">328</span>    ndvi = seasonal + params[&quot;radial_amp&quot;] * radial + lat_factor + noise</span>
+<span class="line"><span class="ln">329</span>    ndvi = np.clip(ndvi, NDVI_MIN_DISPLAY, NDVI_MAX_DISPLAY)</span>
+<span class="line"><span class="ln">330</span>    return ndvi</span>
+<span class="line"><span class="ln">331</span></span>
+<span class="line"><span class="ln">332</span></span>
+<span class="line"><span class="ln">333</span>def cache_tile_path(date: str, z: int, x: int, y: int) -&gt; str:</span>
+<span class="line"><span class="ln">334</span>    ddir = os.path.join(TILE_CACHE_DIR, date)</span>
+<span class="line"><span class="ln">335</span>    os.makedirs(ddir, exist_ok=True)</span>
+<span class="line"><span class="ln">336</span>    return os.path.join(ddir, f&quot;{z}_{x}_{y}.png&quot;)</span>
+<span class="line"><span class="ln">337</span></span>
+<span class="line"><span class="ln">338</span></span>
+<span class="line"><span class="ln">339</span>def write_atomic(path: str, data: bytes):</span>
+<span class="line"><span class="ln">340</span>    d = os.path.dirname(path)</span>
+<span class="line"><span class="ln">341</span>    os.makedirs(d, exist_ok=True)</span>
+<span class="line"><span class="ln">342</span>    fd, tmp = tempfile.mkstemp(dir=d)</span>
+<span class="line"><span class="ln">343</span>    try:</span>
+<span class="line"><span class="ln">344</span>        with os.fdopen(fd, &quot;wb&quot;) as f:</span>
+<span class="line"><span class="ln">345</span>            f.write(data)</span>
+<span class="line"><span class="ln">346</span>        os.replace(tmp, path)</span>
+<span class="line"><span class="ln">347</span>    finally:</span>
+<span class="line"><span class="ln">348</span>        if os.path.exists(tmp):</span>
+<span class="line"><span class="ln">349</span>            try:</span>
+<span class="line"><span class="ln">350</span>                os.remove(tmp)</span>
+<span class="line"><span class="ln">351</span>            except Exception:</span>
+<span class="line"><span class="ln">352</span>                pass</span>
+<span class="line"><span class="ln">353</span></span>
+<span class="line"><span class="ln">354</span></span>
+<span class="line"><span class="ln">355</span>@app.get(&quot;/tiles/{z}/{x}/{y}.png&quot;)</span>
+<span class="line"><span class="ln">356</span>async def get_tile(z: int, x: int, y: int, date: str = Query(None)):</span>
+<span class="line"><span class="ln">357</span>    if date is None:</span>
+<span class="line"><span class="ln">358</span>        date = datetime.utcnow().strftime(&quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">359</span>    if z &lt; 0 or x &lt; 0 or y &lt; 0:</span>
+<span class="line"><span class="ln">360</span>        raise HTTPException(status_code=400, detail=&quot;Invalid tile coords&quot;)</span>
+<span class="line"><span class="ln">361</span>    max_xy = 2 ** z</span>
+<span class="line"><span class="ln">362</span>    if x &gt;= max_xy or y &gt;= max_xy:</span>
+<span class="line"><span class="ln">363</span>        raise HTTPException(status_code=400, detail=&quot;Tile coords out of range for zoom&quot;)</span>
+<span class="line"><span class="ln">364</span>    cached = cache_tile_path(date, z, x, y)</span>
+<span class="line"><span class="ln">365</span>    if os.path.exists(cached):</span>
+<span class="line"><span class="ln">366</span>        try:</span>
+<span class="line"><span class="ln">367</span>            with open(cached, &quot;rb&quot;) as fh:</span>
+<span class="line"><span class="ln">368</span>                data = fh.read()</span>
+<span class="line"><span class="ln">369</span>            return Response(content=data, media_type=&quot;image/png&quot;, headers={&quot;X-Cache&quot;: &quot;HIT&quot;})</span>
+<span class="line"><span class="ln">370</span>        except Exception:</span>
+<span class="line"><span class="ln">371</span>            logger.exception(&quot;Failed reading cached tile; regenerating&quot;)</span>
+<span class="line"><span class="ln">372</span>    bbox = tile_xyz_to_bbox(z, x, y)</span>
+<span class="line"><span class="ln">373</span>    ndvi = generate_ndvi_array(bbox, z, x, y, date)</span>
+<span class="line"><span class="ln">374</span>    rgb = perceptual_colormap(ndvi)</span>
+<span class="line"><span class="ln">375</span>    veg_mask = ndvi &gt;= VEG_ALPHA_THRESHOLD</span>
+<span class="line"><span class="ln">376</span>    alpha = np.where(veg_mask, np.clip(((ndvi - NDVI_MIN_DISPLAY) / (NDVI_MAX_DISPLAY - NDVI_MIN_DISPLAY)) * 255, 70, 255), 0).astype(np.uint8)</span>
+<span class="line"><span class="ln">377</span>    rgba = np.dstack([rgb, alpha])</span>
+<span class="line"><span class="ln">378</span>    img = Image.fromarray(rgba, mode=&quot;RGBA&quot;)</span>
+<span class="line"><span class="ln">379</span>    buf = io.BytesIO()</span>
+<span class="line"><span class="ln">380</span>    img.save(buf, format=&quot;PNG&quot;, optimize=True)</span>
+<span class="line"><span class="ln">381</span>    data = buf.getvalue()</span>
+<span class="line"><span class="ln">382</span>    try:</span>
+<span class="line"><span class="ln">383</span>        write_atomic(cached, data)</span>
+<span class="line"><span class="ln">384</span>    except Exception:</span>
+<span class="line"><span class="ln">385</span>        logger.exception(&quot;Failed writing cached tile&quot;)</span>
+<span class="line"><span class="ln">386</span>    return Response(content=data, media_type=&quot;image/png&quot;, headers={&quot;X-Cache&quot;: &quot;MISS&quot;})</span>
+<span class="line"><span class="ln">387</span></span>
+<span class="line"><span class="ln">388</span></span>
+<span class="line"><span class="ln">389</span># --- Timeseries (deterministic RNG)</span>
+<span class="line"><span class="ln">390</span>def point_timeseries_logic(lon: float, lat: float, points: int = 24, aggregate: str = &quot;monthly&quot;, date: str = None):</span>
+<span class="line"><span class="ln">391</span>    if date:</span>
+<span class="line"><span class="ln">392</span>        try:</span>
+<span class="line"><span class="ln">393</span>            end = datetime.strptime(date, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">394</span>        except Exception:</span>
+<span class="line"><span class="ln">395</span>            end = datetime.utcnow()</span>
+<span class="line"><span class="ln">396</span>    else:</span>
+<span class="line"><span class="ln">397</span>        end = datetime.utcnow()</span>
+<span class="line"><span class="ln">398</span>    if aggregate == &quot;monthly&quot;:</span>
+<span class="line"><span class="ln">399</span>        months = []</span>
+<span class="line"><span class="ln">400</span>        dt = end.replace(day=1)</span>
+<span class="line"><span class="ln">401</span>        for i in range(points):</span>
+<span class="line"><span class="ln">402</span>            months.append(dt.strftime(&quot;%Y-%m&quot;))</span>
+<span class="line"><span class="ln">403</span>            dt = (dt.replace(day=1) - timedelta(days=1)).replace(day=1)</span>
+<span class="line"><span class="ln">404</span>        months = list(reversed(months))</span>
+<span class="line"><span class="ln">405</span>        vals = []</span>
+<span class="line"><span class="ln">406</span>        seed_key = f&quot;pt-{lon:.6f}-{lat:.6f}-{date or &#x27;&#x27;}&quot;</span>
+<span class="line"><span class="ln">407</span>        rng = deterministic_rng_seed(seed_key)</span>
+<span class="line"><span class="ln">408</span>        for i, m in enumerate(months):</span>
+<span class="line"><span class="ln">409</span>            base = 0.25 + 0.12 * math.sin(2 * math.pi * (i / 12.0))</span>
+<span class="line"><span class="ln">410</span>            noise = float(rng.normal(scale=0.04))</span>
+<span class="line"><span class="ln">411</span>            vals.append(round(float(np.clip(base + noise, NDVI_MIN_DISPLAY, NDVI_MAX_DISPLAY)), 4))</span>
+<span class="line"><span class="ln">412</span>        return {&quot;dates&quot;: months, &quot;values&quot;: vals}</span>
+<span class="line"><span class="ln">413</span>    now = end</span>
+<span class="line"><span class="ln">414</span>    dates = [(now - timedelta(days=i)).strftime(&quot;%Y-%m-%d&quot;) for i in reversed(range(points))]</span>
+<span class="line"><span class="ln">415</span>    seed_key = f&quot;ts-{lon:.6f}-{lat:.6f}-{date or &#x27;&#x27;}&quot;</span>
+<span class="line"><span class="ln">416</span>    rng = deterministic_rng_seed(seed_key)</span>
+<span class="line"><span class="ln">417</span>    values = []</span>
+<span class="line"><span class="ln">418</span>    for i in range(points):</span>
+<span class="line"><span class="ln">419</span>        d = now - timedelta(days=points - 1 - i)</span>
+<span class="line"><span class="ln">420</span>        doy = d.timetuple().tm_yday</span>
+<span class="line"><span class="ln">421</span>        base = 0.25 * (0.5 * (1 + math.sin(2 * math.pi * (doy / 365.0))))</span>
+<span class="line"><span class="ln">422</span>        noise = rng.normal(scale=0.03)</span>
+<span class="line"><span class="ln">423</span>        val = np.clip(base + noise, NDVI_MIN_DISPLAY, NDVI_MAX_DISPLAY)</span>
+<span class="line"><span class="ln">424</span>        values.append(round(float(val), 4))</span>
+<span class="line"><span class="ln">425</span>    return {&quot;dates&quot;: dates, &quot;values&quot;: values}</span>
+<span class="line"><span class="ln">426</span></span>
+<span class="line"><span class="ln">427</span></span>
+<span class="line"><span class="ln">428</span>@app.get(&quot;/point-timeseries&quot;)</span>
+<span class="line"><span class="ln">429</span>async def point_timeseries(lon: float, lat: float, points: int = 24, aggregate: str = &quot;monthly&quot;, date: str = None):</span>
+<span class="line"><span class="ln">430</span>    points = max(1, min(points, 720))</span>
+<span class="line"><span class="ln">431</span>    return point_timeseries_logic(lon, lat, points=points, aggregate=aggregate, date=date)</span>
+<span class="line"><span class="ln">432</span></span>
+<span class="line"><span class="ln">433</span></span>
+<span class="line"><span class="ln">434</span># --- AOI helpers (sampling)</span>
+<span class="line"><span class="ln">435</span>def polygon_bounds_from_wkt(wkt: str):</span>
+<span class="line"><span class="ln">436</span>    txt = wkt.replace(&quot;POLYGON((&quot;, &quot;&quot;).replace(&quot;))&quot;, &quot;&quot;).strip()</span>
+<span class="line"><span class="ln">437</span>    coords = [tuple(map(float, p.split())) for p in txt.split(&quot;,&quot;)]</span>
+<span class="line"><span class="ln">438</span>    lons = [c[0] for c in coords]; lats = [c[1] for c in coords]</span>
+<span class="line"><span class="ln">439</span>    return min(lons), min(lats), max(lons), max(lats)</span>
+<span class="line"><span class="ln">440</span></span>
+<span class="line"><span class="ln">441</span></span>
+<span class="line"><span class="ln">442</span>def sample_ndvi_over_bbox(lon_min, lat_min, lon_max, lat_max, date: str, sample=128):</span>
+<span class="line"><span class="ln">443</span>    xs = np.linspace(lon_min, lon_max, sample); ys = np.linspace(lat_max, lat_min, sample)</span>
+<span class="line"><span class="ln">444</span>    lon_grid, lat_grid = np.meshgrid(xs, ys)</span>
+<span class="line"><span class="ln">445</span>    vals = np.full(lon_grid.shape, np.nan, dtype=np.float32)</span>
+<span class="line"><span class="ln">446</span>    # simple reuse strategy: cache by z/x/y when sampling (z fixed at 10)</span>
+<span class="line"><span class="ln">447</span>    z = 10</span>
+<span class="line"><span class="ln">448</span>    n = 2 ** z</span>
+<span class="line"><span class="ln">449</span>    tile_cache: Dict[Tuple[int, int, int], np.ndarray] = {}</span>
+<span class="line"><span class="ln">450</span>    for i in range(sample):</span>
+<span class="line"><span class="ln">451</span>        for j in range(sample):</span>
+<span class="line"><span class="ln">452</span>            lon = lon_grid[i, j]; lat = lat_grid[i, j]</span>
+<span class="line"><span class="ln">453</span>            x = int((lon + 180.0) / 360.0 * n)</span>
+<span class="line"><span class="ln">454</span>            lat_rad = math.radians(lat)</span>
+<span class="line"><span class="ln">455</span>            y = int((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)</span>
+<span class="line"><span class="ln">456</span>            key = (z, x, y)</span>
+<span class="line"><span class="ln">457</span>            if key not in tile_cache:</span>
+<span class="line"><span class="ln">458</span>                bbox = tile_xyz_to_bbox(z, x, y)</span>
+<span class="line"><span class="ln">459</span>                tile_cache[key] = generate_ndvi_array(bbox, z, x, y, date)</span>
+<span class="line"><span class="ln">460</span>            ndvi_tile = tile_cache[key]</span>
+<span class="line"><span class="ln">461</span>            bbox = tile_xyz_to_bbox(z, x, y)</span>
+<span class="line"><span class="ln">462</span>            px = int((lon - bbox[0]) / (bbox[2] - bbox[0]) * TILE_SIZE)</span>
+<span class="line"><span class="ln">463</span>            py = int((bbox[3] - lat) / (bbox[3] - bbox[1]) * TILE_SIZE)</span>
+<span class="line"><span class="ln">464</span>            px = np.clip(px, 0, TILE_SIZE - 1); py = np.clip(py, 0, TILE_SIZE - 1)</span>
+<span class="line"><span class="ln">465</span>            vals[i, j] = ndvi_tile[py, px]</span>
+<span class="line"><span class="ln">466</span>    return vals.flatten()</span>
+<span class="line"><span class="ln">467</span></span>
+<span class="line"><span class="ln">468</span></span>
+<span class="line"><span class="ln">469</span>@app.get(&quot;/areas/{area_id}/ndvi-summary&quot;)</span>
+<span class="line"><span class="ln">470</span>async def area_ndvi_summary(area_id: int, date: str = Query(None)):</span>
+<span class="line"><span class="ln">471</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">472</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">473</span>        cur.execute(&quot;SELECT id,name,geom FROM areas WHERE id=?&quot;, (area_id,))</span>
+<span class="line"><span class="ln">474</span>        row = cur.fetchone()</span>
+<span class="line"><span class="ln">475</span>    if not row:</span>
+<span class="line"><span class="ln">476</span>        raise HTTPException(status_code=404, detail=&quot;Area not found&quot;)</span>
+<span class="line"><span class="ln">477</span>    if date is None:</span>
+<span class="line"><span class="ln">478</span>        date = datetime.utcnow().strftime(&quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">479</span>    lon_min, lat_min, lon_max, lat_max = polygon_bounds_from_wkt(row[&quot;geom&quot;])</span>
+<span class="line"><span class="ln">480</span>    samples = sample_ndvi_over_bbox(lon_min, lat_min, lon_max, lat_max, date, sample=64)</span>
+<span class="line"><span class="ln">481</span>    mean = float(np.nanmean(samples)); median = float(np.nanmedian(samples)); std = float(np.nanstd(samples))</span>
+<span class="line"><span class="ln">482</span>    p10 = float(np.percentile(samples, 10)); p90 = float(np.percentile(samples, 90))</span>
+<span class="line"><span class="ln">483</span>    return {&quot;area_id&quot;: area_id, &quot;date&quot;: date, &quot;mean&quot;: mean, &quot;median&quot;: median, &quot;std&quot;: std, &quot;p10&quot;: p10, &quot;p90&quot;: p90}</span>
+<span class="line"><span class="ln">484</span></span>
+<span class="line"><span class="ln">485</span></span>
+<span class="line"><span class="ln">486</span>def area_ndvi_timeseries_logic(geom_wkt: str, start_dt: datetime, end_dt: datetime):</span>
+<span class="line"><span class="ln">487</span>    dates = [(start_dt + timedelta(days=i)).strftime(&quot;%Y-%m-%d&quot;) for i in range((end_dt - start_dt).days + 1)]</span>
+<span class="line"><span class="ln">488</span>    lon_min, lat_min, lon_max, lat_max = polygon_bounds_from_wkt(geom_wkt)</span>
+<span class="line"><span class="ln">489</span>    values = []</span>
+<span class="line"><span class="ln">490</span>    for d in dates:</span>
+<span class="line"><span class="ln">491</span>        samples = sample_ndvi_over_bbox(lon_min, lat_min, lon_max, lat_max, d, sample=40)</span>
+<span class="line"><span class="ln">492</span>        values.append(round(float(np.nanmean(samples)), 4))</span>
+<span class="line"><span class="ln">493</span>    return {&quot;dates&quot;: dates, &quot;values&quot;: values}</span>
+<span class="line"><span class="ln">494</span></span>
+<span class="line"><span class="ln">495</span></span>
+<span class="line"><span class="ln">496</span>@app.get(&quot;/areas/{area_id}/ndvi-timeseries&quot;)</span>
+<span class="line"><span class="ln">497</span>async def area_ndvi_timeseries(area_id: int, start: str = Query(None), end: str = Query(None), points: int = 30):</span>
+<span class="line"><span class="ln">498</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">499</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">500</span>        cur.execute(&quot;SELECT id,name,geom FROM areas WHERE id=?&quot;, (area_id,))</span>
+<span class="line"><span class="ln">501</span>        row = cur.fetchone()</span>
+<span class="line"><span class="ln">502</span>    if not row:</span>
+<span class="line"><span class="ln">503</span>        raise HTTPException(status_code=404, detail=&quot;Area not found&quot;)</span>
+<span class="line"><span class="ln">504</span>    if end is None:</span>
+<span class="line"><span class="ln">505</span>        end_dt = datetime.utcnow()</span>
+<span class="line"><span class="ln">506</span>    else:</span>
+<span class="line"><span class="ln">507</span>        end_dt = datetime.strptime(end, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">508</span>    if start is None:</span>
+<span class="line"><span class="ln">509</span>        start_dt = end_dt - timedelta(days=points - 1)</span>
+<span class="line"><span class="ln">510</span>    else:</span>
+<span class="line"><span class="ln">511</span>        start_dt = datetime.strptime(start, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">512</span>    return area_ndvi_timeseries_logic(row[&quot;geom&quot;], start_dt, end_dt)</span>
+<span class="line"><span class="ln">513</span></span>
+<span class="line"><span class="ln">514</span></span>
+<span class="line"><span class="ln">515</span>@app.get(&quot;/compare&quot;)</span>
+<span class="line"><span class="ln">516</span>async def compare_areas(area1: int = Query(...), area2: int = Query(...), start: str = Query(None), end: str = Query(None)):</span>
+<span class="line"><span class="ln">517</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">518</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">519</span>        cur.execute(&quot;SELECT id,name,geom FROM areas WHERE id=?&quot;, (area1,))</span>
+<span class="line"><span class="ln">520</span>        r1 = cur.fetchone()</span>
+<span class="line"><span class="ln">521</span>        cur.execute(&quot;SELECT id,name,geom FROM areas WHERE id=?&quot;, (area2,))</span>
+<span class="line"><span class="ln">522</span>        r2 = cur.fetchone()</span>
+<span class="line"><span class="ln">523</span>    if not r1 or not r2:</span>
+<span class="line"><span class="ln">524</span>        raise HTTPException(status_code=404, detail=&quot;Area not found&quot;)</span>
+<span class="line"><span class="ln">525</span>    if end is None:</span>
+<span class="line"><span class="ln">526</span>        end_dt = datetime.utcnow()</span>
+<span class="line"><span class="ln">527</span>    else:</span>
+<span class="line"><span class="ln">528</span>        end_dt = datetime.strptime(end, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">529</span>    if start is None:</span>
+<span class="line"><span class="ln">530</span>        start_dt = end_dt - timedelta(days=29)</span>
+<span class="line"><span class="ln">531</span>    else:</span>
+<span class="line"><span class="ln">532</span>        start_dt = datetime.strptime(start, &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">533</span>    a1 = area_ndvi_timeseries_logic(r1[&quot;geom&quot;], start_dt, end_dt)</span>
+<span class="line"><span class="ln">534</span>    a2 = area_ndvi_timeseries_logic(r2[&quot;geom&quot;], start_dt, end_dt)</span>
+<span class="line"><span class="ln">535</span>    if len(a1[&quot;dates&quot;]) != len(a2[&quot;dates&quot;]):</span>
+<span class="line"><span class="ln">536</span>        start_dt = datetime.strptime(a1[&quot;dates&quot;][0], &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">537</span>        end_dt = datetime.strptime(a1[&quot;dates&quot;][-1], &quot;%Y-%m-%d&quot;)</span>
+<span class="line"><span class="ln">538</span>        dates = [(start_dt + timedelta(days=i)).strftime(&quot;%Y-%m-%d&quot;) for i in range((end_dt - start_dt).days + 1)]</span>
+<span class="line"><span class="ln">539</span>    else:</span>
+<span class="line"><span class="ln">540</span>        dates = a1[&quot;dates&quot;]</span>
+<span class="line"><span class="ln">541</span>    diffs = [round(a1[&quot;values&quot;][i] - a2[&quot;values&quot;][i], 4) for i in range(len(dates))]</span>
+<span class="line"><span class="ln">542</span>    return {&quot;area1&quot;: area1, &quot;area2&quot;: area2, &quot;dates&quot;: dates, &quot;values1&quot;: a1[&quot;values&quot;], &quot;values2&quot;: a2[&quot;values&quot;], &quot;diffs&quot;: diffs}</span>
+<span class="line"><span class="ln">543</span></span>
+<span class="line"><span class="ln">544</span></span>
+<span class="line"><span class="ln">545</span># --- Phenology helpers</span>
+<span class="line"><span class="ln">546</span>def detect_peak_and_onset(values: List[float], dates: List[str], threshold: float = 0.5):</span>
+<span class="line"><span class="ln">547</span>    if not values or not dates:</span>
+<span class="line"><span class="ln">548</span>        return {&quot;peak_date&quot;: None, &quot;peak_value&quot;: None, &quot;onset_date&quot;: None}</span>
+<span class="line"><span class="ln">549</span>    peak_idx = int(np.argmax(values))</span>
+<span class="line"><span class="ln">550</span>    peak_date = dates[peak_idx] if len(dates) &gt; 0 else None</span>
+<span class="line"><span class="ln">551</span>    onset_idx = next((i for i, v in enumerate(values) if v &gt;= threshold), None)</span>
+<span class="line"><span class="ln">552</span>    onset_date = dates[onset_idx] if onset_idx is not None else None</span>
+<span class="line"><span class="ln">553</span>    return {&quot;peak_date&quot;: peak_date, &quot;peak_value&quot;: values[peak_idx] if len(values) &gt; 0 else None, &quot;onset_date&quot;: onset_date}</span>
+<span class="line"><span class="ln">554</span></span>
+<span class="line"><span class="ln">555</span></span>
+<span class="line"><span class="ln">556</span>@app.get(&quot;/areas/{area_id}/phenology&quot;)</span>
+<span class="line"><span class="ln">557</span>async def area_phenology(area_id: int, start: str = Query(None), end: str = Query(None)):</span>
+<span class="line"><span class="ln">558</span>    ts = await area_ndvi_timeseries(area_id, start=start, end=end)</span>
+<span class="line"><span class="ln">559</span>    info = detect_peak_and_onset(ts[&quot;values&quot;], ts[&quot;dates&quot;], threshold=0.5)</span>
+<span class="line"><span class="ln">560</span>    return {&quot;area_id&quot;: area_id, &quot;phenology&quot;: info, &quot;timeseries&quot;: ts}</span>
+<span class="line"><span class="ln">561</span></span>
+<span class="line"><span class="ln">562</span></span>
+<span class="line"><span class="ln">563</span>@app.get(&quot;/areas/rank&quot;)</span>
+<span class="line"><span class="ln">564</span>async def areas_rank_by_growth(days: int = Query(14)):</span>
+<span class="line"><span class="ln">565</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">566</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">567</span>        cur.execute(&quot;SELECT id,name,geom FROM areas&quot;)</span>
+<span class="line"><span class="ln">568</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">569</span>    results = []</span>
+<span class="line"><span class="ln">570</span>    for r in rows:</span>
+<span class="line"><span class="ln">571</span>        area_id = r[&quot;id&quot;]</span>
+<span class="line"><span class="ln">572</span>        end = datetime.utcnow(); start = end - timedelta(days=days)</span>
+<span class="line"><span class="ln">573</span>        ts = area_ndvi_timeseries_logic(r[&quot;geom&quot;], start, end)</span>
+<span class="line"><span class="ln">574</span>        if len(ts[&quot;values&quot;]) &lt; 2:</span>
+<span class="line"><span class="ln">575</span>            continue</span>
+<span class="line"><span class="ln">576</span>        growth = ts[&quot;values&quot;][-1] - ts[&quot;values&quot;][0]</span>
+<span class="line"><span class="ln">577</span>        results.append({&quot;area_id&quot;: area_id, &quot;name&quot;: r[&quot;name&quot;], &quot;growth&quot;: round(growth, 4)})</span>
+<span class="line"><span class="ln">578</span>    results.sort(key=lambda x: x[&quot;growth&quot;], reverse=True)</span>
+<span class="line"><span class="ln">579</span>    return results</span>
+<span class="line"><span class="ln">580</span></span>
+<span class="line"><span class="ln">581</span></span>
+<span class="line"><span class="ln">582</span># --- New species endpoints</span>
+<span class="line"><span class="ln">583</span>@app.get(&quot;/db/species-by-region/{region}&quot;)</span>
+<span class="line"><span class="ln">584</span>async def species_by_region(region: str):</span>
+<span class="line"><span class="ln">585</span>    region_q = region.strip()</span>
+<span class="line"><span class="ln">586</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">587</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">588</span>        cur.execute(&quot;SELECT DISTINCT species_name FROM regional_species WHERE LOWER(region)=LOWER(?)&quot;, (region_q,))</span>
+<span class="line"><span class="ln">589</span>        rows = cur.fetchall()</span>
+<span class="line"><span class="ln">590</span>    species = [r[0] for r in rows]</span>
+<span class="line"><span class="ln">591</span>    return {&quot;region&quot;: region_q, &quot;species&quot;: species}</span>
+<span class="line"><span class="ln">592</span></span>
+<span class="line"><span class="ln">593</span></span>
+<span class="line"><span class="ln">594</span>@app.get(&quot;/species/{name}&quot;)</span>
+<span class="line"><span class="ln">595</span>async def species_meta(name: str):</span>
+<span class="line"><span class="ln">596</span>    nm = name.strip()</span>
+<span class="line"><span class="ln">597</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">598</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">599</span>        cur.execute(&quot;SELECT name, common_name, bloom_start_month, bloom_end_month, soil, organic_recommendation, notes FROM species_meta WHERE LOWER(name)=LOWER(?)&quot;, (nm,))</span>
+<span class="line"><span class="ln">600</span>        row = cur.fetchone()</span>
+<span class="line"><span class="ln">601</span>    if not row:</span>
+<span class="line"><span class="ln">602</span>        raise HTTPException(status_code=404, detail=&quot;Species not found&quot;)</span>
+<span class="line"><span class="ln">603</span>    data = {</span>
+<span class="line"><span class="ln">604</span>        &quot;name&quot;: row[&quot;name&quot;],</span>
+<span class="line"><span class="ln">605</span>        &quot;common_name&quot;: row[&quot;common_name&quot;],</span>
+<span class="line"><span class="ln">606</span>        &quot;bloom_start_month&quot;: int(row[&quot;bloom_start_month&quot;]) if row[&quot;bloom_start_month&quot;] is not None else None,</span>
+<span class="line"><span class="ln">607</span>        &quot;bloom_end_month&quot;: int(row[&quot;bloom_end_month&quot;]) if row[&quot;bloom_end_month&quot;] is not None else None,</span>
+<span class="line"><span class="ln">608</span>        &quot;soil&quot;: row[&quot;soil&quot;],</span>
+<span class="line"><span class="ln">609</span>        &quot;organic_recommendation&quot;: row[&quot;organic_recommendation&quot;],</span>
+<span class="line"><span class="ln">610</span>        &quot;notes&quot;: row[&quot;notes&quot;],</span>
+<span class="line"><span class="ln">611</span>    }</span>
+<span class="line"><span class="ln">612</span>    return data</span>
+<span class="line"><span class="ln">613</span></span>
+<span class="line"><span class="ln">614</span></span>
+<span class="line"><span class="ln">615</span># --- Region page + API</span>
+<span class="line"><span class="ln">616</span>@app.get(&quot;/regions/{region}&quot;, response_class=HTMLResponse)</span>
+<span class="line"><span class="ln">617</span>async def region_page(region: str):</span>
+<span class="line"><span class="ln">618</span>    page = STATIC_DIR / &quot;region.html&quot;</span>
+<span class="line"><span class="ln">619</span>    if not page.exists():</span>
+<span class="line"><span class="ln">620</span>        return HTMLResponse(&quot;&lt;h1&gt;Region page not found&lt;/h1&gt;&quot;, status_code=404)</span>
+<span class="line"><span class="ln">621</span>    return FileResponse(str(page))</span>
+<span class="line"><span class="ln">622</span></span>
+<span class="line"><span class="ln">623</span></span>
+<span class="line"><span class="ln">624</span>@app.get(&quot;/api/region/{region}&quot;)</span>
+<span class="line"><span class="ln">625</span>async def api_region_info(region: str):</span>
+<span class="line"><span class="ln">626</span>    region_q = region.strip()</span>
+<span class="line"><span class="ln">627</span>    with get_db_conn() as conn:</span>
+<span class="line"><span class="ln">628</span>        cur = conn.cursor()</span>
+<span class="line"><span class="ln">629</span>        # species names for region</span>
+<span class="line"><span class="ln">630</span>        cur.execute(&quot;SELECT DISTINCT species_name FROM regional_species WHERE LOWER(region)=LOWER(?)&quot;, (region_q,))</span>
+<span class="line"><span class="ln">631</span>        species_rows = cur.fetchall()</span>
+<span class="line"><span class="ln">632</span>        species = [r[0] for r in species_rows]</span>
+<span class="line"><span class="ln">633</span></span>
+<span class="line"><span class="ln">634</span>        # fetch metadata for each species (if available)</span>
+<span class="line"><span class="ln">635</span>        species_meta_list = []</span>
+<span class="line"><span class="ln">636</span>        if species:</span>
+<span class="line"><span class="ln">637</span>            placeholders = &quot;,&quot;.join(&quot;?&quot; for _ in species)</span>
+<span class="line"><span class="ln">638</span>            # build case-insensitive match list</span>
+<span class="line"><span class="ln">639</span>            lowered = [s.lower() for s in species]</span>
+<span class="line"><span class="ln">640</span>            # fetch all species_meta and match in-Python to avoid SQL dialect issues</span>
+<span class="line"><span class="ln">641</span>            cur.execute(&quot;SELECT name, common_name, bloom_start_month, bloom_end_month, soil, organic_recommendation, notes FROM species_meta&quot;)</span>
+<span class="line"><span class="ln">642</span>            meta_rows = cur.fetchall()</span>
+<span class="line"><span class="ln">643</span>            meta_map = {row[&quot;name&quot;].lower(): dict(row) for row in meta_rows}</span>
+<span class="line"><span class="ln">644</span>            for s in species:</span>
+<span class="line"><span class="ln">645</span>                m = meta_map.get(s.lower())</span>
+<span class="line"><span class="ln">646</span>                if m:</span>
+<span class="line"><span class="ln">647</span>                    species_meta_list.append({</span>
+<span class="line"><span class="ln">648</span>                        &quot;name&quot;: m[&quot;name&quot;],</span>
+<span class="line"><span class="ln">649</span>                        &quot;common_name&quot;: m[&quot;common_name&quot;],</span>
+<span class="line"><span class="ln">650</span>                        &quot;bloom_start_month&quot;: int(m[&quot;bloom_start_month&quot;]) if m[&quot;bloom_start_month&quot;] is not None else None,</span>
+<span class="line"><span class="ln">651</span>                        &quot;bloom_end_month&quot;: int(m[&quot;bloom_end_month&quot;]) if m[&quot;bloom_end_month&quot;] is not None else None,</span>
+<span class="line"><span class="ln">652</span>                        &quot;soil&quot;: m[&quot;soil&quot;],</span>
+<span class="line"><span class="ln">653</span>                        &quot;organic_recommendation&quot;: m[&quot;organic_recommendation&quot;],</span>
+<span class="line"><span class="ln">654</span>                        &quot;notes&quot;: m[&quot;notes&quot;],</span>
+<span class="line"><span class="ln">655</span>                    })</span>
+<span class="line"><span class="ln">656</span>                else:</span>
+<span class="line"><span class="ln">657</span>                    species_meta_list.append({&quot;name&quot;: s})</span>
+<span class="line"><span class="ln">658</span>        # simple counts</span>
+<span class="line"><span class="ln">659</span>        cur.execute(&quot;SELECT COUNT(*) FROM regional_species WHERE LOWER(region)=LOWER(?)&quot;, (region_q,))</span>
+<span class="line"><span class="ln">660</span>        species_count = int(cur.fetchone()[0])</span>
+<span class="line"><span class="ln">661</span>        cur.execute(&quot;SELECT COUNT(*) FROM areas WHERE LOWER(name) LIKE LOWER(?)&quot;, (f&quot;%{region_q}%&quot;,))</span>
+<span class="line"><span class="ln">662</span>        area_ref_count = int(cur.fetchone()[0])</span>
+<span class="line"><span class="ln">663</span></span>
+<span class="line"><span class="ln">664</span>    return {&quot;region&quot;: region_q, &quot;species_count&quot;: species_count, &quot;area_ref_count&quot;: area_ref_count, &quot;species&quot;: species_meta_list}</span>
+<span class="line"><span class="ln">665</span></span>
+<span class="line"><span class="ln">666</span></span>
+<span class="line"><span class="ln">667</span># --- Entrypoint note</span>
+<span class="line"><span class="ln">668</span># You run uvicorn with:</span>
+<span class="line"><span class="ln">669</span># uvicorn main:app --reload --host 127.0.0.1 --port 8080</span>
+<span class="line"><span class="ln">670</span># This file is robust to being started from any CWD because os.chdir(BASE_DIR) is called near the top.</span>
+<span class="line"><span class="ln">671</span></span>
+<span class="line"><span class="ln">672</span>if __name__ == &quot;__main__&quot;:</span>
+<span class="line"><span class="ln">673</span>    import uvicorn, os</span>
+<span class="line"><span class="ln">674</span>    port = int(os.environ.get(&quot;PORT&quot;, &quot;8080&quot;))</span>
+<span class="line"><span class="ln">675</span>    uvicorn.run(&quot;main:app&quot;, host=&quot;127.0.0.1&quot;, port=port, reload=True)</span>
+</code></pre>
+  </div>
+</body>
+</html>

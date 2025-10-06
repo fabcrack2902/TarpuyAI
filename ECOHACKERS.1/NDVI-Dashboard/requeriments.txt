@@ -1,0 +1,6 @@
+fastapi==0.95.2
+<<<<<<< HEAD:ECOHACKERS.1/NDVI-Dashboard/requeriments.txt
+uvicorn[standard]==0.22.0
+=======
+uvicorn[standard]==0.22.0
+>>>>>>> 967e313b9cd8d0c14e76054fcb8ba25a4be25fe2:ecohackers/requeriments.txt

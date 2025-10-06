@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>NDVI Dashboard - Analytical</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css"/>
+</head>
+<body>
+  <div id="sidebar">
+    <header class="sidebar-header">
+      <h1>Analytical NDVI</h1>
+      <button id="toggle-sidebar">⮜</button>
+    </header>
+
+    <div class="controls-panel">
+      <label>Date
+        <input type="date" id="date-input" />
+      </label>
+      <div class="scrub-row">
+        <input type="range" id="scrubber" min="-365" max="0" value="0"/>
+        <div id="scrub-date">Today</div>
+      </div>
+
+      <div class="btn-row">
+        <button id="play-btn">Play</button>
+        <button id="pause-btn" disabled>Pause</button>
+        <button id="loop-btn" aria-pressed="false">Loop</button>
+        <select id="speed-select"><option value="1200">Slow</option><option value="800" selected>Normal</option><option value="400">Fast</option></select>
+        <button id="compare-btn">Compare AOI</button>
+        <button id="aoi-summary-btn">AOI Summary</button>
+      </div>
+
+      <div class="export-row">
+        <button id="export-png">Export PNG</button>
+        <button id="export-csv">Export CSV point</button>
+      </div>
+    </div>
+
+    <div id="layers-list"></div>
+
+    <div id="legend">
+      <div class="scale-gradient"></div>
+      <div class="scale-labels"><span>-0.2</span><span>0</span><span>0.25</span><span>0.5</span><span>0.75</span><span>0.95</span></div>
+    </div>
+
+    <div id="charts">
+      <canvas id="timeseries" height="260"></canvas>
+    </div>
+
+    <div id="map-msg" class="msg"></div>
+    <div id="rank-list" class="rank-list"></div>
+  </div>
+
+  <div id="map-container">
+    <div id="map"></div>
+  </div>
+
+<script>
+(async function(){
+  const dateInput = document.getElementById('date-input');
+  const playBtn = document.getElementById('play-btn');
+  const pauseBtn = document.getElementById('pause-btn');
+  const loopBtn = document.getElementById('loop-btn');
+  const speedSelect = document.getElementById('speed-select');
+  const scrubber = document.getElementById('scrubber');
+  const scrubDate = document.getElementById('scrub-date');
+  const mapMsg = document.getElementById('map-msg');
+  const layersList = document.getElementById('layers-list');
+  const exportPng = document.getElementById('export-png');
+  const exportCsv = document.getElementById('export-csv');
+  const aoiSummaryBtn = document.getElementById('aoi-summary-btn');
+  const compareBtn = document.getElementById('compare-btn');
+  const rankList = document.getElementById('rank-list');
+
+  const today = new Date();
+  dateInput.value = today.toISOString().slice(0,10);
+  scrubber.value = 0; scrubDate.textContent = dateInput.value;
+  let playing=false, loop=false, intervalId=null;
+
+  const map = new maplibregl.Map({ container:'map', style:{version:8, sources:{}, layers:[]}, center:[-77.0,-12.02], zoom:12 });
+  window.map = map;
+
+  // Draw tool
+  const Draw = window.MapboxDraw || window.MapboxDraw; // polyfill check
+  const draw = new MapboxDraw({ displayControlsDefault: false, controls: { polygon: true, trash: true } });
+  map.addControl(draw);
+
+  // --- FLORES DEL PERÚ ---
+  const FLORES = {
+    // Costa
+    "Amancaes": ["Lima"],
+    "Huaranhuay": ["Lima","Ica","Arequipa"],
+    "Cardo costero": ["Lima","La Libertad"],
+    "Lirio de mar": ["Ica","La Libertad"],
+    "Lirio de mar costeño": ["Ica","La Libertad"],
+
+    // Sierra
+    "Cantuta": ["Cusco","Ancash","Ayacucho","Huancavelica"],
+    "Retama": ["Arequipa","Junín","Huancavelica","Ayacucho"],
+    "Puya Raimondii": ["Cusco","Puno","Ancash","Ayacucho"],
+    "Kantu rosada": ["Cusco"],
+    "Flor de ichu": ["Puno","Huancavelica","Junín"],
+    "Ichu": ["Huancavelica","Junín"],
+    "Maracuyá": ["Junín","Ucayali"],
+
+    // Selva
+    "Orquídeas": ["San Martín","Madre de Dios","Amazonas"],
+    "Orquídeas amazónicas": ["Amazonas"],
+    "Heliconia": ["San Martín","Loreto","Ucayali","Madre de Dios"],
+    "Achiote": ["San Martín","Loreto","Ucayali","Madre de Dios"],
+    "Guaba": ["Loreto"]
+  };
+
+  const COLORS = {
+    "Amancaes": "#34d399",
+    "Huaranhuay": "#f97316",
+    "Cardo costero": "#e11d48",
+    "Lirio de mar": "#7c3aed",
+    "Cantuta": "#e63946",
+    "Retama": "#fbbf24",
+    "Puya Raimondii": "#60a5fa",
+    "Kantu rosada": "#ff77ff",
+    "Flor de ichu": "#b5651d",
+    "Ichu": "#b5651d",
+    "Maracuyá": "#f59e0b",
+    "Orquídeas": "#a78bfa",
+    "Orquídeas amazónicas": "#8b5cf6",
+    "Heliconia": "#ef4444",
+    "Achiote": "#f97316",
+    "Guaba": "#10b981"
+  };
+
+  const btn = document.createElement('button');
+  btn.textContent = "🌸 See flowers from Peru";
+  btn.style.position = "absolute";
+  btn.style.top = "10px";
+  btn.style.right = "10px";
+  btn.style.zIndex = "10";
+  btn.style.background = "#fff";
+  btn.style.border = "1px solid #ccc";
+  btn.style.padding = "8px 12px";
+  btn.style.borderRadius = "8px";
+  btn.style.cursor = "pointer";
+  btn.style.fontWeight = "bold";
+  document.body.appendChild(btn);
+  const legend = document.createElement('div');
+  legend.style.position = "absolute";
+  legend.style.top = "60px";
+  legend.style.right = "10px";
+  legend.style.background = "rgba(255,255,255,0.95)";
+  legend.style.borderRadius = "8px";
+  legend.style.padding = "6px";
+  legend.style.fontFamily = "sans-serif";
+  legend.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)";
+  legend.style.zIndex = "10";
+  legend.style.display = "none";
+  legend.style.width = "150px";             // más delgada
+  legend.style.maxHeight = "280px";         // límite de alto
+  legend.style.overflowY = "auto";          // scroll si hay muchas entradas
+  legend.style.fontSize = "12px";           // texto más pequeño
+  legend.innerHTML = "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;'><strong style='font-size:13px'>Flores del Perú</strong><button id='legend-close' style='background:none;border:none;font-weight:700;cursor:pointer;padding:0 4px;line-height:1'>✕</button></div><div id='legend-items' style='display:flex;flex-direction:column;gap:6px;'></div>";
+  document.body.appendChild(legend);
+
+  // cerrar leyenda con el botón X
+  document.getElementById('legend-close').addEventListener('click', ()=>{ legend.style.display = 'none'; });
+
+  // generar botones compactos dentro de #legend-items (sigue usando FLORES y COLORS)
+  const itemsContainer = legend.querySelector('#legend-items');
+  Object.keys(FLORES).forEach(flor=>{
+    const b = document.createElement('button');
+    b.textContent = flor;
+    b.style.background = COLORS[flor] || '#888';
+    b.style.border = "none";
+    b.style.color = "#fff";
+    b.style.width = "100%";
+    b.style.padding = "6px 8px";
+    b.style.borderRadius = "6px";
+    b.style.cursor = "pointer";
+    b.style.fontWeight = "600";
+    b.style.textAlign = "left";
+    b.style.fontSize = "12px";
+    b.style.display = "flex";
+    b.style.alignItems = "center";
+    b.style.gap = "8px";
+
+    // pequeño indicador circular a la izquierda para visual más delgado
+    const dot = document.createElement('span');
+    dot.style.width = "12px";
+    dot.style.height = "12px";
+    dot.style.borderRadius = "50%";
+    dot.style.background = COLORS[flor] || '#888';
+    dot.style.display = "inline-block";
+    dot.style.flex = "0 0 auto";
+    b.prepend(dot);
+
+    b.addEventListener('click', ()=> window.resaltarFlor && window.resaltarFlor(flor));
+    itemsContainer.appendChild(b);
+  });
+  btn.addEventListener('click', ()=>{
+    legend.style.display = legend.style.display === "none" ? "block" : "none";
+  });
+/* --- Inserta después de la creación de `legend` --- */
+
+  // Coordenadas representativas (centroides aproximados) por departamento usado en FLORES
+  const DEPT_COORDS = {
+    "Lima":     [-76.95, -12.05],
+    "Ica":      [-75.7, -14.06],
+    "La Libertad": [-79.0, -8.11],
+    "Arequipa": [-71.54, -16.39],
+    "Cusco":    [-71.97, -13.53],
+    "Puno":     [-70.02, -15.84],
+    "Ancash":   [-77.6, -9.43],
+    "Huancavelica":[-75.22, -12.78],
+    "Junín":    [-75.2, -11.77],
+    "Ayacucho": [-74.22, -13.16],
+    "San Martín":[-76.97, -6.48],
+    "Loreto":   [-74.96, -4.5],
+    "Ucayali":  [-74.6, -9.3],
+    "Madre de Dios": [-70.1, -12.6],
+    "Amazonas": [-77.9, -5.9]
+  };
+
+  // Group source / layer id base para los indicadores de flores
+  const FLOWER_SOURCE = 'flowers-highlight-src';
+  const FLOWER_LAYER = 'flowers-highlight-layer';
+  // función para limpiar marcadores anteriores (si se usan marcadores DOM)
+  window._flowerMarkers = window._flowerMarkers || [];
+
+  window.resaltarFlor = function(florName){
+    // limpiar marcadores DOM previos
+    window._flowerMarkers.forEach(m => m.remove && m.remove());
+    window._flowerMarkers = [];
+
+    // quitar source/layer vector previa si existe
+    try {
+      if (map.getLayer(FLOWER_LAYER)) map.removeLayer(FLOWER_LAYER);
+      if (map.getSource(FLOWER_SOURCE)) map.removeSource(FLOWER_SOURCE);
+    } catch(e){}
+
+    const deps = FLORES[florName] || [];
+    const features = [];
+    deps.forEach(dep => {
+      const coord = DEPT_COORDS[dep];
+      if (!coord) return; // salto si no hay coordenada
+      features.push({
+        type: 'Feature',
+        properties: { department: dep, flower: florName, color: COLORS[florName] || '#ff00ff' },
+        geometry: { type: 'Point', coordinates: coord }
+      });
+      // crear marcador DOM redondo con color de la flor (más visible para zooms bajos)
+      const el = document.createElement('div');
+      el.className = 'flower-marker';
+      el.style.width = '18px';
+      el.style.height = '18px';
+      el.style.borderRadius = '50%';
+      el.style.boxShadow = '0 0 6px rgba(0,0,0,0.25)';
+      el.style.background = COLORS[florName] || '#ff00ff';
+      el.title = `${florName} — ${dep}`;
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(coord).addTo(map);
+      window._flowerMarkers.push(marker);
+    });
+
+    // si no hay features válidos, avisar (no interrumpe)
+    if (features.length === 0) {
+      // opcional: pequeña notificación en mapMsg
+      mapMsg.textContent = `There are no coordinates assigned for the departments of ${florName}`;
+      setTimeout(()=> mapMsg.textContent = '', 2500);
+      return;
+    }
+
+    // añadir como source/layer para soporte a estilos vectoriales (círculos ajustables por zoom)
+    map.addSource(FLOWER_SOURCE, { type: 'geojson', data: { type:'FeatureCollection', features }});
+    map.addLayer({
+      id: FLOWER_LAYER,
+      type: 'circle',
+      source: FLOWER_SOURCE,
+      paint: {
+        'circle-color': ['get', 'color'],
+        'circle-radius': [
+          'interpolate',
+          ['exponential', 1.5],
+          ['zoom'],
+          4, 6,
+          8, 10,
+          12, 18
+        ],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1.5,
+        'circle-opacity': 0.95
+      }
+    });
+
+    // centrar/ajustar vista si hay un solo departamento, o hacer fitBounds para varios
+    if (features.length === 1) {
+      map.easeTo({ center: features[0].geometry.coordinates, zoom: 8 });
+    } else {
+      const lats = features.map(f => f.geometry.coordinates[1]);
+      const lons = features.map(f => f.geometry.coordinates[0]);
+      const bounds = [
+        [Math.min(...lons), Math.min(...lats)],
+        [Math.max(...lons), Math.max(...lats)]
+      ];
+      map.fitBounds(bounds, { padding: 60, maxZoom: 10, duration: 800 });
+    }
+
+    // mostrar mensaje breve
+    mapMsg.textContent = `${florName}: highlighting ${features.length} department(s)`;
+    setTimeout(()=> mapMsg.textContent = '', 3000);
+  };
+
+/* --- fin de inserción --- */
+
+  async function hasLocalTiles(){
+    try { const res = await fetch('/tiles/4/8/5.png',{method:'HEAD'}); return res && res.ok; } catch(e){ return false; }
+  }
+
+  async function initBase(){
+  // intenta tiles locales; si fallan, usa basemap público de fallback
+  try {
+    const test = await fetch(`/tiles/4/8/5.png?date=${encodeURIComponent(dateInput.value)}`, { method: 'HEAD' });
+    if (test && test.ok) {
+      if (!map.getSource('ndvi-base')) {
+        map.addSource('ndvi-base', { type:'raster', tiles:[`/tiles/{z}/{x}/{y}.png?date=${dateInput.value}`], tileSize:256 });
+        map.addLayer({ id:'ndvi-base-layer', type:'raster', source:'ndvi-base', paint:{'raster-opacity':1} }, 'base-raster');
+      } else {
+        // actualizar tiles si ya existe
+        try { map.removeLayer('ndvi-base-layer'); map.removeSource('ndvi-base'); } catch(e){}
+        map.addSource('ndvi-base', { type:'raster', tiles:[`/tiles/{z}/{x}/{y}.png?date=${dateInput.value}`], tileSize:256 });
+        map.addLayer({ id:'ndvi-base-layer', type:'raster', source:'ndvi-base', paint:{'raster-opacity':1} }, 'base-raster');
+      }
+    } else {
+      throw new Error('no local tiles');
+    }
+  } catch(err) {
+    // fallback público
+    if (map.getLayer('ndvi-base-layer')) { try{ map.removeLayer('ndvi-base-layer'); map.removeSource('ndvi-base'); }catch(e){} }
+    if (!map.getSource('base-tiles')) {
+      map.addSource('base-tiles', { type:'raster', tiles:['https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'], tileSize:256 });
+      map.addLayer({ id:'base-raster', type:'raster', source:'base-tiles' });
+    }
+  }
+  // forzar redimensionado breve para que MapLibre re-pintee
+  setTimeout(()=> map.resize(), 120);
+}
+
+
+  let active='a';
+  function sid(k){ return `ndvi-${k}`; }
+  function fadeInSource(dateStr){
+    const other = active==='a'?'b':'a';
+    const id = sid(other);
+    const url = `/tiles/{z}/{x}/{y}.png?date=${encodeURIComponent(dateStr)}`;
+    if(map.getSource(id)){ if(map.getLayer(`${id}-layer`)) map.removeLayer(`${id}-layer`); map.removeSource(id); }
+    map.addSource(id,{type:'raster',tiles:[url],tileSize:256});
+    map.addLayer({id:`${id}-layer`, type:'raster', source:id, paint:{'raster-opacity':0}}, 'base-raster');
+    let step=0, steps=12;
+    const iv = setInterval(()=>{ step++; const t = (step/steps); if(map.getLayer(`${id}-layer`)) map.setPaintProperty(`${id}-layer`,'raster-opacity', t); const old = sid(active); if(map.getLayer(`${old}-layer`)) map.setPaintProperty(`${old}-layer`,'raster-opacity', 1-t); if(step>=steps){ clearInterval(iv); const old = sid(active); if(map.getLayer(`${old}-layer`)) map.removeLayer(`${old}-layer`); if(map.getSource(old)) map.removeSource(old); active = other; } }, 40);
+  }
+
+  async function loadVectors(){
+    const layers = await fetch('/layers').then(r=>r.json());
+    layersList.innerHTML='';
+    layers.forEach(l=>{
+      const el = document.createElement('div'); el.className='layer-item';
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = (l.id==='ndvi' || l.type==='vector'); cb.id = `cb-${l.id}`;
+      const label = document.createElement('label'); label.htmlFor = cb.id; label.textContent = l.title;
+      el.appendChild(cb); el.appendChild(label); layersList.appendChild(el);
+      cb.addEventListener('change', ()=>{ if(l.id==='ndvi'){ if(cb.checked) fadeInSource(dateInput.value); else { ['a','b'].forEach(k=>{ const id = sid(k); if(map.getLayer(`${id}-layer`)) map.removeLayer(`${id}-layer`); if(map.getSource(id)) map.removeSource(id); }); } } else { const mapLayer = (l.id==='areas')?'areas-fill':(l.id==='stations')?'stations-layer':(l.id==='crops')?'crops-layer':'pollinators-layer'; if(map.getLayer(mapLayer)) map.setLayoutProperty(mapLayer,'visibility', cb.checked ? 'visible' : 'none'); } });
+    });
+
+    // fetch geojson endpoints
+    const stations = await fetch('/db/stations').then(r=>r.json()).catch(()=>null);
+    if(stations){ if(map.getSource('stations')){ if(map.getLayer('station-clusters')) map.removeLayer('station-clusters'); if(map.getLayer('stations-layer')) map.removeLayer('stations-layer'); map.removeSource('stations'); } map.addSource('stations',{type:'geojson', data:stations, cluster:true, clusterRadius:50}); map.addLayer({id:'station-clusters', type:'circle', source:'stations', filter:['has','point_count'], paint:{'circle-color':'#f28cb1','circle-radius':['step',['get','point_count'],12,10,16,50,24]}}); map.addLayer({id:'stations-layer', type:'circle', source:'stations', filter:['!',['has','point_count']], paint:{'circle-radius':6,'circle-color':'#ff5722','circle-stroke-color':'#fff','circle-stroke-width':1}}); }
+
+    const areas = await fetch('/db/areas').then(r=>r.json()).catch(()=>null);
+    if(areas){ areas.features = areas.features.map(f => { if(f.properties && f.properties.wkt){ const txt = f.properties.wkt.replace('POLYGON((', '').replace('))','').trim(); const coords = txt.split(',').map(s=>s.trim().split(/\s+/).map(Number)); f.geometry = { type:'Polygon', coordinates:[coords] }; } return f; }); if(map.getSource('areas')){ if(map.getLayer('areas-fill')) map.removeLayer('areas-fill'); if(map.getLayer('areas-line')) map.removeLayer('areas-line'); map.removeSource('areas'); } map.addSource('areas',{type:'geojson', data:areas}); map.addLayer({id:'areas-fill', type:'fill', source:'areas', paint:{'fill-color':'#2b9348','fill-opacity':0.12}}); map.addLayer({id:'areas-line', type:'line', source:'areas', paint:{'line-color':'#2b9348','line-width':2}}); }
+
+    const crops = await fetch('/db/crops').then(r=>r.json()).catch(()=>null);
+    if(crops){ if(map.getSource('crops')){ if(map.getLayer('crops-layer')) map.removeLayer('crops-layer'); map.removeSource('crops'); } map.addSource('crops',{type:'geojson', data:crops}); map.addLayer({id:'crops-layer', type:'circle', source:'crops', paint:{'circle-radius':['interpolate',['linear'],['get','area'],0,4,20,12],'circle-color':'#f4d35e','circle-stroke-color':'#7f5539','circle-stroke-width':1}}); }
+
+    const pollinators = await fetch('/db/pollinators').then(r=>r.json()).catch(()=>null);
+    if(pollinators){ if(map.getSource('pollinators')){ if(map.getLayer('pollinators-layer')) map.removeLayer('pollinators-layer'); map.removeSource('pollinators'); } map.addSource('pollinators',{type:'geojson', data:pollinators}); map.addLayer({id:'pollinators-layer', type:'circle', source:'pollinators', paint:{'circle-radius':['interpolate',['linear'],['get','abundance'],0,3,50,14],'circle-color':'#66c2a5','circle-stroke-color':'#fff','circle-stroke-width':1}}); }
+  }
+
+  // timeseries chart
+  const ctx = document.getElementById('timeseries').getContext('2d');
+  const tsChart = new Chart(ctx, { type:'line', data:{ labels:[], datasets:[{ label:'NDVI', data:[], borderColor:'#2b9348', backgroundColor:'rgba(43,147,72,0.12)', fill:true }]}, options:{ responsive:true, maintainAspectRatio:false, scales:{ y:{ min:-0.2, max:1 } } } });
+
+  function updateTimeseries(lon, lat, points = 24) {
+  const dateParam = encodeURIComponent(dateInput.value || new Date().toISOString().slice(0,10));
+  console.log('pidiendo monthly', lon, lat, points, dateParam);
+  fetch(`/point-timeseries?lon=${lon}&lat=${lat}&points=${points}&aggregate=monthly&date=${dateParam}`)
+    .then(r => r.json())
+    .then(d => {
+      console.log('resp timeseries', d);
+      const labels = d.dates.map(s => {
+        const parts = String(s).split('-');
+        return parts.length === 2 ? ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(parts[1],10)-1] + ' ' + parts[0] : s;
+      });
+      tsChart.data.labels = labels;
+      tsChart.data.datasets[0].data = d.values;
+      tsChart.update();
+    })
+    .catch(e => { console.warn('Error fetching monthly timeseries', e); });
+}
+/* --- Datos climáticos embebidos (pegar inmediatamente después de la creación de tsChart) --- */
+const CLIMATE_DATA_RAW = `Fecha,Var1,Precipitacion1,Var2,Precipitacion2,Temp_C,Humedad_pct,Var3,Optimo
+1/12/2024,35498.59,0,270.73,0,25.24,12.09,520.58,Sí
+2/12/2024,35449.37,0,282.32,0,24.26,9.94,446.92,Sí
+3/12/2024,35402.66,0,253.44,0,21.45,9.46,431.97,Sí
+4/12/2024,35358.49,0,243.87,0,20.02,8.73,445.17,Sí
+5/12/2024,35316.88,0,266.36,0,20.82,7.92,386.31,No
+6/12/2024,35277.88,0,306.83,0,27.74,9.72,440.02,Sí
+7/12/2024,35241.49,0,286.91,0,27.41,11.86,512.49,Sí
+8/12/2024,35207.75,0,265.72,0,22.52,9.3,427.08,Sí
+9/12/2024,35176.68,0,254.64,0,21.1,8.8,415.49,Sí
+10/12/2024,35148.3,0,270.27,0,23.09,9.52,433.68,Sí
+11/12/2024,35122.63,0,238.28,0,21.46,10.26,497.6,Sí
+12/12/2024,35099.68,0,195.04,0,16.85,8.26,594.49,No
+13/12/2024,35079.48,0,212.71,0,18.35,8.92,553.63,Sí
+14/12/2024,35062.04,0,237.94,0,19.52,8.64,466.55,Sí
+15/12/2024,35047.36,0,254.46,0,20.22,8.12,407.22,Sí
+16/12/2024,35035.47,0,279.38,0,23.06,8.71,409.05,Sí`;
+
+/* Parse CSV simple */
+function parseClimateCSV(csv) {
+  const lines = csv.trim().split('\n');
+  const headers = lines.shift().split(',').map(h => h.trim());
+  return lines.map(line => {
+    const cols = line.split(',').map(c => c.trim());
+    const obj = {};
+    headers.forEach((h,i)=> obj[h]=cols[i]??'');
+    const parts = obj.Fecha.includes('/') ? obj.Fecha.split('/') : obj.Fecha.split('-');
+    obj._date = (parts.length===3 && obj.Fecha.includes('/')) ? new Date(parts[2], Number(parts[1])-1, parts[0]) : new Date(obj.Fecha);
+    obj.Temp_C = parseFloat(String(obj['Temp_C'] || obj['Temp (°C)'] || obj.Temp_C || obj.Temp_C).replace(',', '.')) || null;
+    obj.Humedad_pct = parseFloat(String(obj['Humedad_pct'] || obj['Humedad (%)'] || obj.Humedad_pct).replace(',', '.')) || null;
+    obj.Var3 = parseFloat(String(obj.Var3 || '').replace(',', '.')) || null;
+    obj.Optimo = String(obj.Optimo || obj['Optimal for flowers'] || '').toLowerCase().startsWith('s');
+    return obj;
+  });
+}
+
+/* Integrar datos en tsChart sin borrar NDVI (añade datasets adicionales y toggle) */
+(function integrateClimate() {
+  const data = parseClimateCSV(CLIMATE_DATA_RAW);
+  const labels = data.map(d => d._date.toISOString().slice(0,10));
+  const temps = data.map(d => d.Temp_C);
+  const hums = data.map(d => d.Humedad_pct);
+  const var3 = data.map(d => d.Var3);
+  // asegurar que el dataset NDVI (índice 0) se mantiene; añadimos datasets climáticos a índices 1..n
+  // si ya hay datasets adicionales, los reemplazamos limpiamente
+  // construimos datasets climáticos (visuales discretos y en el mismo eje y por simplicidad)
+  const climateDatasets = [
+    { label: 'Temp (°C)', data: temps, borderColor: 'tomato', backgroundColor: 'rgba(255,99,71,0.12)', fill: false, hidden: true, yAxisID: undefined },
+    { label: 'Humidity (%)', data: hums, borderColor: 'skyblue', backgroundColor: 'rgba(135,206,235,0.12)', fill: false, hidden: true, yAxisID: undefined },
+    { label: 'Var3', data: var3, borderColor: 'green', backgroundColor: 'rgba(0,128,0,0.08)', fill: false, hidden: true, yAxisID: undefined },
+    { label: 'Optimal days', data: data.map((d,i)=> d.Optimo ? {x: labels[i], y: temps[i]} : null).filter(Boolean), type: 'scatter', backgroundColor: 'gold', pointRadius: 6, showLine: false, hidden: true, yAxisID: undefined }
+  ];
+
+  // remove any previous climate datasets (keep NDVI at index 0)
+  tsChart.data.datasets = tsChart.data.datasets.slice(0,1).concat(climateDatasets);
+  // if tsChart had no labels yet, set them; otherwise preserve existing label alignment if NDVI dataset is time-based
+  tsChart.data.labels = labels;
+  tsChart.update();
+
+  // small UI toggle to show/hide climate datasets
+  const controlsRow = document.createElement('div');
+  controlsRow.style.display = 'flex';
+  controlsRow.style.gap = '6px';
+  controlsRow.style.marginTop = '6px';
+  controlsRow.style.alignItems = 'center';
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.textContent = 'Show weather';
+  toggleBtn.style.padding = '6px 8px';
+  toggleBtn.style.fontSize = '12px';
+  toggleBtn.style.cursor = 'pointer';
+  toggleBtn.dataset.shown = 'false';
+  controlsRow.appendChild(toggleBtn);
+
+  // attach controls under #charts
+  const chartsDiv = document.getElementById('charts') || document.body;
+  chartsDiv.appendChild(controlsRow);
+
+  toggleBtn.addEventListener('click', ()=> {
+    const shown = toggleBtn.dataset.shown === 'true';
+    // climate datasets occupy indices 1..4
+    for (let i=1; i<tsChart.data.datasets.length; i++) {
+      tsChart.data.datasets[i].hidden = shown; // if currently shown, hide; otherwise show
+    }
+    tsChart.update();
+    toggleBtn.textContent = shown ? 'Show weather' : 'Hide weather';
+    toggleBtn.dataset.shown = String(!shown);
+  });
+
+  // create compact table of the climate data (Fecha, Temp, Humedad, Óptimo)
+  let tblWrap = document.getElementById('climate-table-wrap');
+  if (!tblWrap) {
+    tblWrap = document.createElement('div');
+    tblWrap.id = 'climate-table-wrap';
+    tblWrap.style.marginTop = '8px';
+    tblWrap.style.maxHeight = '140px';
+    tblWrap.style.overflowY = 'auto';
+    tblWrap.style.fontSize = '12px';
+    chartsDiv.appendChild(tblWrap);
+  }
+  const rows = data.map(d => `<tr><td style="padding:4px 6px">${d._date.toISOString().slice(0,10)}</td><td style="padding:4px 6px;text-align:right">${d.Temp_C ?? ''}</td><td style="padding:4px 6px;text-align:right">${d.Humedad_pct ?? ''}</td><td style="padding:4px 6px;text-align:center">${d.Optimo ? 'Sí' : 'No'}</td></tr>`).join('');
+  tblWrap.innerHTML = `<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f6f6f6;font-weight:600"><th style="text-align:left;padding:6px">Fecha</th><th style="text-align:right;padding:6px">Temp</th><th style="text-align:right;padding:6px">Humedad</th><th style="text-align:center;padding:6px">Óptimo</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+})();
+
+  map.on('load', async ()=>{
+    await initBase(); await loadVectors(); fadeInSource(dateInput.value);
+    setTimeout(()=> map.resize(), 150);
+    document.getElementById('toggle-sidebar').addEventListener('click', ()=> {
+  // tu lógica de apertura/cierre...
+    setTimeout(()=> map.resize(), 200);
+    });
+    map.on('click', async (e) => {
+  const { lng, lat } = e.lngLat;
+  // actualiza gráfico lateral
+  updateTimeseries(lng, lat, 90);
+
+  // crear popup simple y directo
+  const popupDiv = document.createElement('div');
+  popupDiv.style.width = '280px';
+  popupDiv.style.padding = '6px';
+  popupDiv.style.boxSizing = 'border-box';
+
+  const title = document.createElement('div');
+  title.style.fontSize = '12px';
+  title.style.marginBottom = '6px';
+  title.textContent = `Lon ${lng.toFixed(4)}  Lat ${lat.toFixed(4)}`;
+  popupDiv.appendChild(title);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 220;
+  canvas.height = 130;
+  popupDiv.appendChild(canvas);
+
+  const popup = new maplibregl.Popup({ offset: 10 }).setLngLat([lng, lat]).setDOMContent(popupDiv).addTo(map);
+
+  try {
+    const resp = await fetch(`/point-timeseries?lon=${lng}&lat=${lat}&points=90`);
+    const d = await resp.json();
+    if (typeof Chart === 'undefined') {
+      title.textContent += '  (Chart.js no cargado)';
+      return;
+    }
+    new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: d.dates, datasets: [{ data: d.values, borderColor:'#2b9348', backgroundColor:'rgba(43,147,72,0.12)', fill:true, pointRadius:0 }]},
+      options: { responsive:false, animation:false, plugins:{ legend:{ display:false } }, scales:{ y:{ min:-0.2, max:1 } } }
+    });
+  } catch (err) {
+    title.textContent += '  (error cargando datos)';
+  }
+});
+
+    // ranking panel
+    const rank = await fetch(`/areas/rank?days=14`).then(r=>r.json()).catch(()=>[]);
+    rankList.innerHTML = '<h3>Top áreas (crecimiento 14d)</h3>';
+    rank.forEach(r=>{ const el = document.createElement('div'); el.className='rank-item'; el.textContent = `${r.name}: ${r.growth}`; rankList.appendChild(el); });
+  });
+
+  dateInput.addEventListener('change', ()=>{ fadeInSource(dateInput.value); scrubber.value = 0; scrubDate.textContent = dateInput.value; });
+
+  scrubber.addEventListener('input', ()=>{ const offset = parseInt(scrubber.value,10); const d = new Date(); d.setDate(d.getDate() + offset); dateInput.value = d.toISOString().slice(0,10); scrubDate.textContent = dateInput.value; fadeInSource(dateInput.value); });
+
+  playBtn.addEventListener('click', ()=>{ if(playing) return; playing=true; playBtn.disabled=true; pauseBtn.disabled=false; const sp = parseInt(speedSelect.value,10); intervalId = setInterval(()=>{ const d = new Date(dateInput.value); d.setDate(d.getDate()+1); dateInput.value = d.toISOString().slice(0,10); fadeInSource(dateInput.value); if(!loop && new Date(dateInput.value) > new Date()){ clearInterval(intervalId); playing=false; playBtn.disabled=false; pauseBtn.disabled=true; } }, sp); });
+
+  pauseBtn.addEventListener('click', ()=>{ if(!playing) return; clearInterval(intervalId); playing=false; playBtn.disabled=false; pauseBtn.disabled=true; });
+
+  loopBtn.addEventListener('click', ()=>{ loop = !loop; loopBtn.classList.toggle('active', loop); loopBtn.setAttribute('aria-pressed', String(loop)); });
+
+  exportPng.addEventListener('click', async ()=>{ const canvas = map.getCanvas(); const data = canvas.toDataURL('image/png'); const img = new Image(); img.src = data; await img.decode(); const off = document.createElement('canvas'); off.width = img.width; off.height = img.height; const ctx = off.getContext('2d'); ctx.drawImage(img,0,0); // draw legend
+    const g = ctx.createLinearGradient(30, off.height-100, 230, off.height-100); g.addColorStop(0,'#783f20'); g.addColorStop(0.25,'#ffd54f'); g.addColorStop(0.5,'#adef7f'); g.addColorStop(0.75,'#3ca050'); g.addColorStop(1,'#0a5a28'); ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.fillRect(20, off.height-120, 240, 100); ctx.fillStyle=g; ctx.fillRect(30, off.height-95, 200, 20); ctx.fillStyle='#000'; ctx.font='12px Arial'; ctx.fillText('-0.2', 30, off.height-70); ctx.fillText('0', 70, off.height-70); ctx.fillText('0.25', 120, off.height-70); ctx.fillText('0.5', 170, off.height-70); ctx.fillText('0.95', 210, off.height-70); const a = document.createElement('a'); a.href = off.toDataURL('image/png'); a.download = `ndvi-${dateInput.value}.png`; a.click(); });
+
+  exportCsv.addEventListener('click', ()=>{ map.once('click', async (e)=>{ mapMsg.textContent = 'Generando CSV...'; const lon = e.lngLat.lng, lat = e.lngLat.lat; const d = await fetch(`/point-timeseries?lon=${lon}&lat=${lat}&points=365`).then(r=>r.json()); let csv='date,ndvi\n'; for(let i=0;i<d.dates.length;i++) csv+=`${d.dates[i]},${d.values[i]}\n`; const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download = `timeseries-${lon.toFixed(4)}_${lat.toFixed(4)}.csv`; a.click(); URL.revokeObjectURL(url); mapMsg.textContent='CSV generado'; }); mapMsg.textContent='Click en el mapa para seleccionar punto'; });
+
+  aoiSummaryBtn.addEventListener('click', async ()=>{ const features = draw.getAll(); if(!features || !features.features || features.features.length===0){ alert('Dibuja un polígono primero (herramienta draw en mapa)'); return; } const poly = features.features[0]; // crude WKT build
+    const coords = poly.geometry.coordinates[0].map(c=>`${c[0]} ${c[1]}`).join(','); const wkt = `POLYGON((${coords}))`; // post to backend via temp area
+    // quick hack: create area on client -> call /areas/{id}/... not implemented; instead call /areas/ndvi-summary-multi (not present) -> fallback sample via /areas/ndvi-summary using server areas for demo
+    mapMsg.textContent='Resumen AOI (muestreo local)...'; // we approximate by using bbox
+    const lons = poly.geometry.coordinates[0].map(c=>c[0]); const lats = poly.geometry.coordinates[0].map(c=>c[1]); const lonmin=Math.min(...lons), lonmax=Math.max(...lons), latmin=Math.min(...lats), latmax=Math.max(...lats);
+    // call a lightweight new endpoint /aoi/summary?lonmin... (not implemented in backend minimal); we approximate by sampling points via point-timeseries multiple points -> simplified
+    const sampleLon = (lonmin+lonmax)/2, sampleLat = (latmin+latmax)/2;
+    const ts = await fetch(`/point-timeseries?lon=${sampleLon}&lat=${sampleLat}&points=30`).then(r=>r.json()); let mean = ts.values.reduce((a,b)=>a+b,0)/ts.values.length; alert(`AOI aprox mean NDVI (centro): ${mean.toFixed(3)}`); });
+  })();
+
+
+</script>
+</body>
+</html>

@@ -670,4 +670,4 @@ async def api_region_info(region: str):
 if __name__ == "__main__":
     import uvicorn, os
     port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=port)

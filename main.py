@@ -666,6 +666,8 @@ async def api_region_info(region: str):
 # You run uvicorn with:
 # uvicorn main:app --reload --host 127.0.0.1 --port 8080
 # This file is robust to being started from any CWD because os.chdir(BASE_DIR) is called near the top.
+def read_root():
+    return {"message": "Hola desde Render!"}
 
 if __name__ == "__main__":
     import uvicorn, os
